@@ -10,6 +10,7 @@
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "start": "node server/index.js",
+    "postinstall": "node server/scripts/postinstall.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
