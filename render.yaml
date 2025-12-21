@@ -3,7 +3,7 @@ services:
     name: the-darji-api
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && node server/scripts/postinstall.js
     startCommand: npm start
     envVars:
       - key: DATABASE_URL
