@@ -1,0 +1,152 @@
+// This is your Prisma schema file for Postgres (Cloud Deployment)
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model GarmentType {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  price       Float
+  cost        Float       @default(0)
+  description String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  OrderItem   OrderItem[]
+  MeasurementTemplate MeasurementTemplate[]
+}
+
+model Client {
+  id        String    @id @default(uuid())
+  name      String
+  phone     String    @unique
+  email     String?
+  address   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  orders    Order[]
+  messages  Message[]
+  measurementTemplates MeasurementTemplate[]
+}
+
+model Order {
+  id                       String                @id @default(uuid())
+  orderNumber              String                @unique
+  clientId                 String
+  client                   Client                @relation(fields: [clientId], references: [id])
+  status                   String                @default("Pending") // Pending, InProgress, Trial, Completed, Delivered
+  totalAmount              Float
+  finalAmount              Float?                // Actual amount settled/received (handles discounts)
+  advance                  Float                 @default(0)
+  additionalServices       String?               // Deprecated - kept for backward compatibility
+  additionalServicesAmount Float                 @default(0) // Deprecated - kept for backward compatibility
+  additionalServicesCost   Float                 @default(0) // Deprecated - kept for backward compatibility
+  trialDate                DateTime?
+  deliveryDate             DateTime?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  items                    OrderItem[]
+  additionalServiceItems   AdditionalService[]
+  specialRequirements      SpecialRequirement[]
+  trialNotes               TrialNote[]
+  measurements             String?               // JSON string of measurement data
+  invoice                  Invoice?
+}
+
+model OrderItem {
+  id            String      @id @default(uuid())
+  orderId       String
+  order         Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  garmentTypeId String
+  garmentType   GarmentType @relation(fields: [garmentTypeId], references: [id])
+  quantity      Int
+  price         Float
+  cost          Float       @default(0)
+  subtotal      Float
+  createdAt     DateTime    @default(now())
+}
+
+model AdditionalService {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  description String
+  amount      Float
+  cost        Float    @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model SpecialRequirement {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  note      String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+}
+
+model TrialNote {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  note      String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+}
+
+model Invoice {
+  id           String   @id @default(uuid())
+  orderId      String   @unique
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  invoiceNumber String  @unique
+  pdfPath      String?
+  createdAt    DateTime @default(now())
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id])
+  type      String   // OrderConfirmation, PostDelivery, ReEngagement
+  content   String
+  status    String   @default("Pending") // Pending, Sent, Failed
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model MeasurementTemplate {
+  id            String      @id @default(uuid())
+  name          String      // e.g., "John's Shirt", "Wedding Suit Template"
+  clientId      String?
+  client        Client?     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  garmentTypeId String?
+  garmentType   GarmentType? @relation(fields: [garmentTypeId], references: [id])
+  measurements  String      // JSON string of measurement data
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model MessageTemplate {
+  id          String   @id @default(uuid())
+  name        String   // e.g., "Order Confirmation", "Trial Reminder"
+  type        String   // OrderConfirmation, TrialReminder, DeliveryReminder, PaymentReminder, Custom
+  content     String   // Template text with variables like {{clientName}}
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

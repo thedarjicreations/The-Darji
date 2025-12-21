@@ -1,0 +1,203 @@
+import React, { useState, useEffect } from 'react';
+import api from '../api/client';
+import { FiMessageSquare, FiFilter, FiCheck, FiClock, FiSend, FiRefreshCw, FiShoppingBag, FiSearch, FiCalendar } from 'react-icons/fi';
+
+export default function Messages() {
+    const [messages, setMessages] = useState([]);
+    const [filteredMessages, setFilteredMessages] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [typeFilter, setTypeFilter] = useState('all');
+
+    useEffect(() => {
+        fetchMessages();
+    }, []);
+
+    useEffect(() => {
+        filterMessages();
+    }, [messages, typeFilter]);
+
+    const fetchMessages = async () => {
+        try {
+            const response = await api.get('/messages');
+            setMessages(response.data);
+        } catch (error) {
+            console.error('Error fetching messages:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const filterMessages = () => {
+        if (typeFilter === 'all') {
+            setFilteredMessages(messages);
+        } else {
+            setFilteredMessages(messages.filter(msg => msg.type === typeFilter));
+        }
+    };
+
+    const getTypeColor = (type) => {
+        const colors = {
+            'OrderConfirmation': 'bg-blue-100 text-blue-800',
+            'PostDelivery': 'bg-green-100 text-green-800',
+            'ReEngagement': 'bg-purple-100 text-purple-800'
+        };
+        return colors[type] || 'bg-gray-100 text-gray-800';
+    };
+
+    const getTypeName = (type) => {
+        const names = {
+            'OrderConfirmation': 'Order Confirmation',
+            'PostDelivery': 'Post-Delivery',
+            'ReEngagement': 'Re-Engagement'
+        };
+        return names[type] || type;
+    };
+
+    const formatDate = (dateString) => {
+        return new Date(dateString).toLocaleString('en-IN');
+    };
+
+    if (loading) {
+        return <div className="text-center py-12">Loading messages...</div>;
+    }
+
+    return (
+        <div className="fade-in max-w-7xl mx-auto pb-20 md:pb-0">
+            {/* Header */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 pt-2">
+                <div>
+                    <h1 className="text-3xl md:text-4xl font-black text-gray-900 tracking-tight">Message History</h1>
+                    <p className="text-gray-500 mt-2 font-medium">Track automated & manual communications</p>
+                </div>
+            </div>
+
+            {/* Stats */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-4 text-gray-100 group-hover:text-gray-200 transition-colors pointer-events-none"><FiMessageSquare size={60} /></div>
+                    <div className="text-sm font-bold text-gray-500 uppercase tracking-wider relative z-10">Total Messages</div>
+                    <div className="text-4xl font-black text-gray-900 relative z-10">{messages.length}</div>
+                </div>
+                <div className="bg-blue-50 p-5 rounded-2xl shadow-sm border border-blue-100 flex flex-col justify-between h-32 relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-4 text-blue-100 group-hover:text-blue-200 transition-colors pointer-events-none"><FiShoppingBag size={60} /></div>
+                    <div className="text-sm font-bold text-blue-600 uppercase tracking-wider relative z-10">Order Updates</div>
+                    <div className="text-4xl font-black text-blue-700 relative z-10">
+                        {messages.filter(m => m.type === 'OrderConfirmation').length}
+                    </div>
+                </div>
+                <div className="bg-green-50 p-5 rounded-2xl shadow-sm border border-green-100 flex flex-col justify-between h-32 relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-4 text-green-100 group-hover:text-green-200 transition-colors pointer-events-none"><FiCheck size={60} /></div>
+                    <div className="text-sm font-bold text-green-600 uppercase tracking-wider relative z-10">Post-Delivery</div>
+                    <div className="text-4xl font-black text-green-700 relative z-10">
+                        {messages.filter(m => m.type === 'PostDelivery').length}
+                    </div>
+                </div>
+                <div className="bg-purple-50 p-5 rounded-2xl shadow-sm border border-purple-100 flex flex-col justify-between h-32 relative overflow-hidden group">
+                    <div className="absolute right-0 top-0 p-4 text-purple-100 group-hover:text-purple-200 transition-colors pointer-events-none"><FiRefreshCw size={60} /></div>
+                    <div className="text-sm font-bold text-purple-600 uppercase tracking-wider relative z-10">Re-Engagement</div>
+                    <div className="text-4xl font-black text-purple-700 relative z-10">
+                        {messages.filter(m => m.type === 'ReEngagement').length}
+                    </div>
+                </div>
+            </div>
+
+            {/* Filter */}
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-6 sticky top-0 md:top-auto z-40 bg-gray-50/95 backdrop-blur md:bg-transparent py-2 md:py-0">
+                <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 scrollbar-hide">
+                    <button
+                        onClick={() => setTypeFilter('all')}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all shadow-sm ${typeFilter === 'all' ? 'bg-gray-900 text-white shadow-gray-200' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-100'}`}
+                    >
+                        All Messages
+                    </button>
+                    <button
+                        onClick={() => setTypeFilter('OrderConfirmation')}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all shadow-sm ${typeFilter === 'OrderConfirmation' ? 'bg-blue-600 text-white shadow-blue-200' : 'bg-white text-gray-600 hover:bg-blue-50 border border-gray-100'}`}
+                    >
+                        Orders
+                    </button>
+                    <button
+                        onClick={() => setTypeFilter('PostDelivery')}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all shadow-sm ${typeFilter === 'PostDelivery' ? 'bg-green-600 text-white shadow-green-200' : 'bg-white text-gray-600 hover:bg-green-50 border border-gray-100'}`}
+                    >
+                        Post-Delivery
+                    </button>
+                    <button
+                        onClick={() => setTypeFilter('ReEngagement')}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-sm whitespace-nowrap transition-all shadow-sm ${typeFilter === 'ReEngagement' ? 'bg-purple-600 text-white shadow-purple-200' : 'bg-white text-gray-600 hover:bg-purple-50 border border-gray-100'}`}
+                    >
+                        Re-Engagement
+                    </button>
+                </div>
+
+                <div className="hidden md:flex items-center text-sm font-medium text-gray-400">
+                    <FiSearch className="mr-2" /> Filtered Results: {filteredMessages.length}
+                </div>
+            </div>
+
+            {/* Messages List */}
+            <div className="space-y-6">
+                {filteredMessages.length === 0 ? (
+                    <div className="bg-white p-20 rounded-3xl shadow-sm border border-gray-100 text-center flex flex-col items-center justify-center">
+                        <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center text-gray-300 mb-4">
+                            <FiMessageSquare size={32} />
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-900">No messages found</h3>
+                        <p className="text-gray-500 mt-2">Try changing the filter or send a new message</p>
+                    </div>
+                ) : (
+                    filteredMessages.map(message => (
+                        <div key={message.id} className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-lg transition-all duration-300 group">
+                            <div className="flex flex-col md:flex-row gap-4">
+                                {/* Left: Avatar/Icon */}
+                                <div className="hidden md:block">
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xl text-white shadow-md ${message.type === 'OrderConfirmation' ? 'bg-gradient-to-br from-blue-500 to-blue-600' :
+                                            message.type === 'PostDelivery' ? 'bg-gradient-to-br from-green-500 to-green-600' :
+                                                'bg-gradient-to-br from-purple-500 to-purple-600'
+                                        }`}>
+                                        <FiSend size={20} />
+                                    </div>
+                                </div>
+
+                                {/* Content */}
+                                <div className="flex-1">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                                                {message.client.name}
+                                                <span className={`md:hidden p-1.5 rounded-lg text-white text-xs ${message.type === 'OrderConfirmation' ? 'bg-blue-500' :
+                                                        message.type === 'PostDelivery' ? 'bg-green-500' : 'bg-purple-500'
+                                                    }`}><FiSend size={10} /></span>
+                                            </h3>
+                                            <p className="text-sm font-medium text-gray-500">{message.client.phone}</p>
+                                        </div>
+                                        <div className="flex flex-col items-end">
+                                            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${getTypeColor(message.type)}`}>
+                                                {getTypeName(message.type)}
+                                            </span>
+                                            <div className="flex items-center gap-1.5 mt-2 text-xs font-bold text-gray-400">
+                                                <FiCalendar size={12} /> {formatDate(message.createdAt)}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-gray-50 p-4 rounded-xl rounded-tl-none border border-gray-100 text-gray-700 leading-relaxed font-medium relative group-hover:bg-blue-50/30 transition-colors">
+                                        <p className="whitespace-pre-wrap text-sm md:text-base">{message.content}</p>
+                                    </div>
+
+                                    {/* Footer Stats for Message */}
+                                    <div className="mt-3 flex items-center gap-4 text-xs font-bold text-gray-400">
+                                        <span className={`flex items-center gap-1 ${message.status === 'Sent' ? 'text-green-600' : 'text-orange-500'}`}>
+                                            {message.status === 'Sent' ? <FiCheck className="text-base" /> : <FiClock />}
+                                            {message.status.toUpperCase()}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+}

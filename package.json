@@ -1,0 +1,44 @@
+{
+  "name": "the-darji-app",
+  "version": "1.0.0",
+  "description": "Business Management App for The Darji - Custom Tailoring Services",
+  "main": "server/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "nodemon server/index.js",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "start": "node server/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio"
+  },
+  "keywords": [
+    "tailoring",
+    "business-management",
+    "invoice",
+    "orders"
+  ],
+  "author": "The Darji",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^5.9.1",
+    "bcrypt": "^5.1.1",
+    "cloudinary": "^1.41.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "multer-storage-cloudinary": "^4.0.0",
+    "node-cron": "^3.0.3",
+    "pdfkit": "^0.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.3",
+    "prisma": "^5.9.1"
+  }
+}
