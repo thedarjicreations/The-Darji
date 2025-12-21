@@ -18,9 +18,22 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+// Middleware
+app.use(cors({
+  origin: '*', // Allow all origins explicitly for debugging
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Request Logging Middleware
+app.use((req, res, next) => {
+  console.log(`📝 [${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
+  next();
+});
 
 // Serve static files (invoices)
 app.use('/invoices', express.static('invoices'));
