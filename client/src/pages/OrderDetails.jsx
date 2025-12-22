@@ -674,6 +674,63 @@ export default function OrderDetails() {
                             </div>
                         </div>
 
+
+                        {/* Measurements Section */}
+                        {order.measurements && (
+                            <div className="bg-white rounded-xl shadow-lg lg:shadow-md overflow-hidden border border-gray-100/50 fade-in delay-150 mb-6">
+                                <div className="p-5 border-b border-gray-100 flex justify-between items-center sm:block">
+                                    <div>
+                                        <p className="hidden sm:block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Tailoring Specs</p>
+                                        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                                            Measurements
+                                        </h2>
+                                    </div>
+                                    <div className="sm:hidden text-darji-primary">
+                                        <FiAlignLeft size={20} />
+                                    </div>
+                                </div>
+
+                                <div className="p-5 bg-gray-50/30">
+                                    <div className="bg-white rounded-xl border border-gray-200 p-5 font-mono text-sm text-gray-700 whitespace-pre-wrap leading-relaxed shadow-sm relative overflow-hidden">
+                                        <div className="absolute top-0 left-0 w-1 h-full bg-darji-accent/50"></div>
+                                        {(() => {
+                                            try {
+                                                // Try parsing as JSON to see if it's structured data
+                                                const parsed = JSON.parse(order.measurements);
+
+                                                // If it's a string (double-encoded), parse again
+                                                if (typeof parsed === 'string') {
+                                                    try {
+                                                        const doubleParsed = JSON.parse(parsed);
+                                                        if (typeof doubleParsed === 'object' && doubleParsed !== null) {
+                                                            return Object.entries(doubleParsed).map(([k, v]) => `${k}: ${v}`).join('\n');
+                                                        }
+                                                        return parsed;
+                                                    } catch (e) {
+                                                        return parsed;
+                                                    }
+                                                }
+
+                                                // If it's an object, format it
+                                                if (typeof parsed === 'object' && parsed !== null) {
+                                                    return Object.entries(parsed).map(([k, v]) => `${k}: ${v}`).join('\n');
+                                                }
+
+                                                // Fallback to original string
+                                                return order.measurements;
+                                            } catch (e) {
+                                                // Not JSON, return as is (stripping quotes if it somehow has them wrapping the whole thing unnecessarily, but usually just raw)
+                                                // Actually, raw string is best for textarea content
+                                                return (typeof order.measurements === 'string' && order.measurements.startsWith('"') && order.measurements.endsWith('"'))
+                                                    ? order.measurements.slice(1, -1).replace(/\\n/g, '\n')
+                                                    : order.measurements;
+                                            }
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Order Items */}
                         <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100/50 fade-in delay-200">
                             <div className="flex items-center justify-between mb-6">
