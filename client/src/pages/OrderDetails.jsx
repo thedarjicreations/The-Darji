@@ -691,42 +691,87 @@ export default function OrderDetails() {
                                 </div>
 
                                 <div className="p-5 bg-gray-50/30">
-                                    <div className="bg-white rounded-xl border border-gray-200 p-5 font-mono text-sm text-gray-700 whitespace-pre-wrap leading-relaxed shadow-sm relative overflow-hidden">
-                                        <div className="absolute top-0 left-0 w-1 h-full bg-darji-accent/50"></div>
-                                        {(() => {
-                                            try {
-                                                // Try parsing as JSON to see if it's structured data
-                                                const parsed = JSON.parse(order.measurements);
-
-                                                // If it's a string (double-encoded), parse again
-                                                if (typeof parsed === 'string') {
-                                                    try {
-                                                        const doubleParsed = JSON.parse(parsed);
-                                                        if (typeof doubleParsed === 'object' && doubleParsed !== null) {
-                                                            return Object.entries(doubleParsed).map(([k, v]) => `${k}: ${v}`).join('\n');
-                                                        }
-                                                        return parsed;
-                                                    } catch (e) {
-                                                        return parsed;
+                                    {(() => {
+                                        let content = order.measurements;
+                                        try {
+                                            // 1. Normalize content to string
+                                            let parsed = JSON.parse(order.measurements);
+                                            // Handle double-encoded string
+                                            if (typeof parsed === 'string') {
+                                                try {
+                                                    const doubleParsed = JSON.parse(parsed);
+                                                    if (typeof doubleParsed === 'object' && doubleParsed !== null) {
+                                                        parsed = doubleParsed;
+                                                    } else {
+                                                        parsed = parsed; // It was just a string
                                                     }
-                                                }
-
-                                                // If it's an object, format it
-                                                if (typeof parsed === 'object' && parsed !== null) {
-                                                    return Object.entries(parsed).map(([k, v]) => `${k}: ${v}`).join('\n');
-                                                }
-
-                                                // Fallback to original string
-                                                return order.measurements;
-                                            } catch (e) {
-                                                // Not JSON, return as is (stripping quotes if it somehow has them wrapping the whole thing unnecessarily, but usually just raw)
-                                                // Actually, raw string is best for textarea content
-                                                return (typeof order.measurements === 'string' && order.measurements.startsWith('"') && order.measurements.endsWith('"'))
-                                                    ? order.measurements.slice(1, -1).replace(/\\n/g, '\n')
-                                                    : order.measurements;
+                                                } catch (e) { /* Just a string */ }
                                             }
-                                        })()}
-                                    </div>
+
+                                            // If it's an object, format entries to key-value string
+                                            if (typeof parsed === 'object' && parsed !== null) {
+                                                const lines = Object.entries(parsed)
+                                                    .map(([k, v]) => `${k}: ${v || ''}`);
+                                                content = lines.length > 0 ? lines.join('\n') : '';
+                                            } else {
+                                                content = String(parsed);
+                                            }
+                                        } catch (e) {
+                                            // Not JSON, handle as raw string cleanup
+                                            if (typeof order.measurements === 'string' && order.measurements.startsWith('"') && order.measurements.endsWith('"')) {
+                                                content = order.measurements.slice(1, -1).replace(/\\n/g, '\n');
+                                            }
+                                        }
+
+                                        if (!content || !content.trim()) {
+                                            return (
+                                                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                                                    <span className="text-gray-400 italic">No detailed measurements recorded.</span>
+                                                </div>
+                                            );
+                                        }
+
+                                        // 2. Parse Sections
+                                        const lines = content.split('\n');
+                                        const sections = [];
+                                        let currentSection = { title: 'General', items: [] };
+
+                                        lines.forEach(line => {
+                                            // Regex to match "=== HEADER ===" or "=== HEADER ===:"
+                                            // Also handles clean labels if they just come in as "Header" ? No, stick to explicit marker
+                                            const headerMatch = line.match(/^===\s+(.+)\s+===:?\s*$/);
+                                            if (headerMatch) {
+                                                if (currentSection.items.length > 0) sections.push(currentSection);
+                                                currentSection = { title: headerMatch[1], items: [] };
+                                            } else if (line.trim()) {
+                                                currentSection.items.push(line);
+                                            }
+                                        });
+                                        if (currentSection.items.length > 0 || sections.length > 0) sections.push(currentSection);
+
+                                        // Filter out empty 'General' if we have other sections
+                                        const finalSections = sections.filter(s => s.items.length > 0);
+
+                                        // 3. Render
+                                        if (finalSections.length === 0) return null;
+
+                                        return (
+                                            <div className={`grid gap-4 ${finalSections.length > 1 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+                                                {finalSections.map((section, idx) => (
+                                                    <div key={idx} className="bg-white rounded-xl border border-gray-200 p-5 font-mono text-sm text-gray-700 whitespace-pre-wrap leading-relaxed shadow-sm relative overflow-hidden group hover:border-darji-accent/30 transition-colors">
+                                                        <div className={`absolute top-0 left-0 w-1 h-full ${section.title !== 'General' ? 'bg-darji-accent' : 'bg-gray-300'}`}></div>
+                                                        {section.title !== 'General' && (
+                                                            <h4 className="font-bold text-gray-800 mb-3 uppercase tracking-wider text-xs border-b border-gray-100 pb-2 flex items-center gap-2">
+                                                                <span className="w-1.5 h-1.5 bg-darji-accent rounded-full"></span>
+                                                                {section.title}
+                                                            </h4>
+                                                        )}
+                                                        {section.items.join('\n')}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         )}

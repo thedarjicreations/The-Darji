@@ -191,6 +191,8 @@ export default function NewOrder() {
         }
     };
 
+    const [showTemplateManager, setShowTemplateManager] = useState(false);
+
     const handleDeleteGlobalTemplate = async (e, templateId) => {
         e.stopPropagation();
         if (!confirm('Are you sure you want to delete this outfit?')) return;
@@ -202,6 +204,20 @@ export default function NewOrder() {
         } catch (error) {
             console.error('Error deleting outfit:', error);
             showToast('Failed to delete outfit', 'error');
+        }
+    };
+
+    const handleDeleteTemplate = async (e, templateId) => {
+        e.preventDefault(); // Prevent dropdown from closing if inside
+        if (!confirm('Delete this saved template?')) return;
+
+        try {
+            await api.delete(`/measurement-templates/${templateId}`);
+            await fetchMeasurementTemplates();
+            showToast('Template deleted', 'success');
+        } catch (error) {
+            console.error('Error deleting template:', error);
+            showToast('Failed to delete template', 'error');
         }
     };
 
@@ -226,6 +242,12 @@ export default function NewOrder() {
             if (useSmartForm) {
                 const lines = rawMeasurements.split('\n');
                 const parsed = lines.map(line => {
+                    // Check for header
+                    const headerMatch = line.match(/^===\s+(.+)\s+===:?\s*$/);
+                    if (headerMatch) {
+                        return { label: `=== ${headerMatch[1]} ===`, value: '', isHeader: true };
+                    }
+
                     const [label, ...valParts] = line.split(':');
                     const cleanLabel = (label?.trim() || '').replace(/^"|"$/g, '');
                     const cleanValue = valParts.join(':').trim().replace(/^"|"$/g, '');
@@ -256,21 +278,34 @@ export default function NewOrder() {
     const loadStandardTemplate = (type) => {
         const standards = MEASUREMENT_STANDARDS[type];
         if (standards) {
-            setActiveFields(standards.map(label => ({ label, value: '' })));
+            // Append new section with header
+            const newFields = [
+                ...activeFields,
+                { label: `=== ${type.toUpperCase()} ===`, value: '', isHeader: true },
+                ...standards.map(label => ({ label, value: '' }))
+            ];
+            setActiveFields(newFields);
             setUseSmartForm(true);
-            showToast(`${type} template loaded`, 'success');
+            showToast(`${type} added to measurements`, 'success');
         }
     };
 
+
+
+
     const updateMeasurementField = (index, field, value) => {
-        const newFields = [...activeFields];
-        newFields[index][field] = value;
+        // Use immutable update pattern to ensure React detects changes correctly
+        const newFields = activeFields.map((f, i) =>
+            i === index ? { ...f, [field]: value } : f
+        );
         setActiveFields(newFields);
     };
 
     const addCustomField = () => {
         setActiveFields([...activeFields, { label: '', value: '' }]);
     };
+
+
 
     const removeField = (index) => {
         const newFields = activeFields.filter((_, i) => i !== index);
@@ -472,6 +507,9 @@ export default function NewOrder() {
             setLoading(false);
         }
     };
+
+
+
 
     return (
         <div className="fade-in max-w-5xl mx-auto pb-20 md:pb-0">
@@ -945,33 +983,79 @@ export default function NewOrder() {
                         </div>
                     )}
 
-                    {/* Template Selector & Save Button */}
-                    <div className="mb-6 flex gap-3">
-                        <select
-                            value=""
-                            onChange={(e) => e.target.value && loadTemplate(e.target.value)}
-                            className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent font-medium text-gray-700 cursor-pointer hover:border-gray-300 transition-colors"
-                        >
-                            <option value="">📏 Load client saved template...</option>
-                            {measurementTemplates
-                                .filter(t => t.clientId === selectedClient)
-                                .map(template => (
-                                    <option key={template.id} value={template.id}>
-                                        {template.name}
-                                    </option>
-                                ))}
-                        </select>
 
-                        <button
-                            type="button"
-                            onClick={() => setShowSaveTemplate(true)}
-                            disabled={!measurements.trim()}
-                            className="px-6 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95"
-                        >
-                            <FiSave />
-                            <span className="hidden md:inline">Save</span>
-                        </button>
+
+                    {/* Client Templates & Save Button */}
+                    <div className="mb-6 space-y-4">
+                        {/* Dropdown Selector for Scalability */}
+                        <div className="flex gap-3">
+                            <div className="flex-1 relative">
+                                <select
+                                    value=""
+                                    onChange={(e) => e.target.value && loadTemplate(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent font-medium text-gray-700 cursor-pointer hover:border-gray-300 transition-colors appearance-none bg-white"
+                                >
+                                    <option value="">📏 Load client saved template...</option>
+                                    {measurementTemplates
+                                        .filter(t => t.clientId == selectedClient)
+                                        .map(template => (
+                                            <option key={template.id} value={template.id}>
+                                                {template.name}
+                                            </option>
+                                        ))}
+                                </select>
+                                <div className="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-gray-500">
+                                    <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Manage Templates Toggle */}
+                        {measurementTemplates.filter(t => t.clientId == selectedClient).length > 0 && (
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTemplateManager(!showTemplateManager)}
+                                    className="text-xs font-bold text-gray-500 hover:text-darji-accent flex items-center gap-1 transition-colors select-none"
+                                >
+                                    {showTemplateManager ? 'Hide' : 'Manage'} Saved Templates ({measurementTemplates.filter(t => t.clientId == selectedClient).length})
+                                </button>
+
+                                {showTemplateManager && (
+                                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 animate-in fade-in slide-in-from-top-2 duration-300 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                        {measurementTemplates
+                                            .filter(t => t.clientId == selectedClient)
+                                            .map(template => (
+                                                <div key={template.id} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-200 shadow-sm">
+                                                    <span className="text-sm font-medium text-gray-700 truncate">{template.name}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => handleDeleteTemplate(e, template.id)}
+                                                        className="text-gray-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-md transition-colors"
+                                                        title="Delete Template"
+                                                    >
+                                                        <FiTrash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex gap-3 justify-end border-t border-gray-100 pt-4">
+                            <button
+                                type="button"
+                                onClick={() => setShowSaveTemplate(true)}
+                                disabled={!measurements.trim()}
+                                className="px-6 py-3 bg-darji-accent text-white rounded-xl hover:bg-blue-600 font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95 transform"
+                            >
+                                <FiSave />
+                                <span className="hidden md:inline">Save Content as New Template</span>
+                            </button>
+                        </div>
                     </div>
+
 
                     {/* Smart Form Grid */}
                     {useSmartForm ? (
@@ -979,31 +1063,49 @@ export default function NewOrder() {
                             {activeFields.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {activeFields.map((field, index) => (
-                                        <div key={index} className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-300">
-                                            <div className="flex-1 bg-gray-50 rounded-xl border border-gray-200 overflow-hidden flex focus-within:ring-2 focus-within:ring-darji-accent focus-within:bg-white transition-all">
-                                                <input
-                                                    type="text"
-                                                    value={field.label}
-                                                    onChange={(e) => updateMeasurementField(index, 'label', e.target.value)}
-                                                    className="w-1/3 px-3 py-3 border-r border-gray-200 bg-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider outline-none text-right"
-                                                    placeholder="LABEL"
-                                                />
-                                                <input
-                                                    type="text"
-                                                    value={field.value}
-                                                    onChange={(e) => updateMeasurementField(index, 'value', e.target.value)}
-                                                    className="w-2/3 px-3 py-3 bg-transparent font-bold text-gray-900 outline-none"
-                                                    placeholder="Value"
-                                                />
+                                        field.isHeader ? (
+                                            <div key={index} className="col-span-full mt-6 mb-2 flex items-center gap-4 animate-in fade-in slide-in-from-left-2">
+                                                <div className="h-px flex-1 bg-gray-200"></div>
+                                                <span className="font-black text-gray-500 text-xs tracking-widest uppercase bg-gray-50 px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
+                                                    {field.label.replace(/===/g, '').trim()}
+                                                </span>
+                                                <div className="h-px flex-1 bg-gray-200"></div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeField(index)}
+                                                    className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                                                    title="Remove Section"
+                                                >
+                                                    <FiTrash2 size={16} />
+                                                </button>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={() => removeField(index)}
-                                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                            >
-                                                <FiTrash2 />
-                                            </button>
-                                        </div>
+                                        ) : (
+                                            <div key={index} className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-300">
+                                                <div className="flex-1 bg-gray-50 rounded-xl border border-gray-200 overflow-hidden flex focus-within:ring-2 focus-within:ring-darji-accent focus-within:bg-white transition-all">
+                                                    <input
+                                                        type="text"
+                                                        value={field.label}
+                                                        onChange={(e) => updateMeasurementField(index, 'label', e.target.value)}
+                                                        className="w-1/3 px-3 py-3 border-r border-gray-200 bg-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider outline-none text-right"
+                                                        placeholder="LABEL"
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        value={field.value}
+                                                        onChange={(e) => updateMeasurementField(index, 'value', e.target.value)}
+                                                        className="w-2/3 px-3 py-3 bg-transparent font-bold text-gray-900 outline-none"
+                                                        placeholder="Value"
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeField(index)}
+                                                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                                >
+                                                    <FiTrash2 />
+                                                </button>
+                                            </div>
+                                        )
                                     ))}
                                     <button
                                         type="button"
@@ -1073,6 +1175,7 @@ export default function NewOrder() {
                                     Cancel
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={saveAsTemplate}
                                     className="flex-1 px-6 py-3 bg-darji-accent text-white rounded-xl hover:bg-blue-600 font-bold transition-all shadow-md hover:shadow-lg active:scale-95"
                                 >
