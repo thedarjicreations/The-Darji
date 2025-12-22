@@ -1604,68 +1604,84 @@ export default function OrderDetails() {
                 <div className="mt-6 space-y-6">
 
                     {/* Special Requirements */}
-                    {order.specialRequirements && order.specialRequirements.length > 0 && (
-                        <div className="bg-white p-5 lg:p-6 rounded-xl shadow-lg border border-gray-100/50 fade-in delay-300">
-                            <div className="flex items-center justify-between mb-6">
-                                <div>
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Custom Requests</p>
-                                    <h2 className="text-lg lg:text-xl font-bold text-gray-800">Special Requirements</h2>
+                    <div className="bg-white p-5 lg:p-6 rounded-xl shadow-lg border border-gray-100/50 fade-in delay-300">
+                        <div className="flex items-center justify-between mb-6">
+                            <div>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Custom Requests</p>
+                                <h2 className="text-lg lg:text-xl font-bold text-gray-800">Special Requirements</h2>
+                            </div>
+                            {!editingRequirements && (order.specialRequirements?.length > 0) && (
+                                <button
+                                    onClick={() => setEditingRequirements(true)}
+                                    className="text-sm font-semibold text-darji-accent hover:text-darji-primary transition-colors flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-lg"
+                                >
+                                    <FiEdit2 size={14} /> <span className="hidden sm:inline">Edit</span>
+                                </button>
+                            )}
+                            {!editingRequirements && (!order.specialRequirements || order.specialRequirements.length === 0) && (
+                                <button
+                                    onClick={() => setEditingRequirements(true)}
+                                    className="text-sm font-semibold text-white bg-darji-primary hover:bg-darji-accent transition-colors flex items-center gap-1 px-3 py-1.5 rounded-lg shadow-sm"
+                                >
+                                    <FiPlus size={14} /> <span className="hidden sm:inline">Add</span>
+                                </button>
+                            )}
+                        </div>
+
+                        {editingRequirements ? (
+                            <div className="space-y-4">
+                                <div className="text-sm text-gray-600 mb-2">
+                                    Add one requirement per line. Optionally attach images below.
+                                </div>
+                                <textarea
+                                    value={requirements.join('\n')}
+                                    onChange={(e) => setRequirements(e.target.value.split('\n'))}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-darji-accent"
+                                    rows="5"
+                                    placeholder="One requirement per line"
+                                />
+
+                                {/* Image uploads for each requirement */}
+                                <div className="space-y-2">
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Attach Images to Requirements
+                                    </label>
+                                    {requirements.filter(r => r.trim()).map((req, index) => (
+                                        <div key={index} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
+                                            <span className="text-sm text-gray-600 flex-shrink-0 w-8">{index + 1}.</span>
+                                            <span className="text-sm flex-1 truncate">{req}</span>
+                                            <input
+                                                type="file"
+                                                id={`requirement-image-${index}`}
+                                                accept="image/*"
+                                                className="text-sm w-48"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex space-x-2">
+                                    <button
+                                        onClick={handleUpdateRequirements}
+                                        className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600"
+                                    >
+                                        <FiSave className="inline mr-1" /> Save
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setEditingRequirements(false);
+                                            setRequirements(order.specialRequirements?.map(r => r.note) || []);
+                                        }}
+                                        className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400"
+                                    >
+                                        Cancel
+                                    </button>
                                 </div>
                             </div>
-
-                            {editingRequirements ? (
-                                <div className="space-y-4">
-                                    <div className="text-sm text-gray-600 mb-2">
-                                        Add one requirement per line. Optionally attach images below.
-                                    </div>
-                                    <textarea
-                                        value={requirements.join('\n')}
-                                        onChange={(e) => setRequirements(e.target.value.split('\n'))}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-darji-accent"
-                                        rows="5"
-                                        placeholder="One requirement per line"
-                                    />
-
-                                    {/* Image uploads for each requirement */}
-                                    <div className="space-y-2">
-                                        <label className="block text-sm font-medium text-gray-700">
-                                            Attach Images to Requirements
-                                        </label>
-                                        {requirements.filter(r => r.trim()).map((req, index) => (
-                                            <div key={index} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
-                                                <span className="text-sm text-gray-600 flex-shrink-0 w-8">{index + 1}.</span>
-                                                <span className="text-sm flex-1 truncate">{req}</span>
-                                                <input
-                                                    type="file"
-                                                    id={`requirement-image-${index}`}
-                                                    accept="image/*"
-                                                    className="text-sm w-48"
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    <div className="flex space-x-2">
-                                        <button
-                                            onClick={handleUpdateRequirements}
-                                            className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600"
-                                        >
-                                            <FiSave className="inline mr-1" /> Save
-                                        </button>
-                                        <button
-                                            onClick={() => {
-                                                setEditingRequirements(false);
-                                                setRequirements(order.specialRequirements.map(r => r.note));
-                                            }}
-                                            className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="space-y-4">
-                                    {order.specialRequirements.map((req, index) => (
+                        ) : (
+                            <div className="space-y-4">
+                                {order.specialRequirements && order.specialRequirements.length > 0 ? (
+                                    order.specialRequirements.map((req, index) => (
                                         <div key={req.id}>
                                             {/* Mobile View - Unified White Card Style */}
                                             <div className="lg:hidden bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden relative group ring-1 ring-black/5">
@@ -1839,11 +1855,16 @@ export default function OrderDetails() {
                                                 </div>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )}
+                                    ))
+                                ) : (
+                                    <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+                                        <p className="text-gray-400 text-sm font-medium">No special requirements added yet</p>
+                                        <p className="text-gray-400 text-xs mt-1">Click "Add" button above to include custom requests</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
 
                     {/* Trial Notes */}
                     <div className="bg-white rounded-xl shadow-lg border border-gray-100/50 overflow-hidden fade-in delay-300">
