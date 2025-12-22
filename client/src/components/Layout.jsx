@@ -49,7 +49,7 @@ export default function Layout() {
                 <div className="p-8 pb-4 flex items-center gap-3">
                     <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden shadow-lg shadow-black/50 bg-black">
                         <img
-                            src={`http://${window.location.hostname}:5000/assets/logo.png`}
+                            src="/logo.png"
                             alt="The Darji"
                             className="w-full h-full object-cover"
                         />
