@@ -16,7 +16,7 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('jwtToken');
         const storedUser = localStorage.getItem('user');
 
         if (token && storedUser) {
@@ -26,29 +26,39 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const login = async (username, password) => {
-        const response = await api.post('/auth/login', { username, password });
-        const { token, user } = response.data;
+        try {
+            const response = await api.post('/auth/login', { username, password });
+            const { token, user: userData } = response.data;
 
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
-        setUser(user);
+            localStorage.setItem('jwtToken', token);
+            localStorage.setItem('user', JSON.stringify(userData));
+            setUser(userData);
 
-        return user;
+            return userData;
+        } catch (error) {
+            console.error('Login error:', error);
+            throw error;
+        }
     };
 
     const register = async (username, password, name) => {
-        const response = await api.post('/auth/register', { username, password, name });
-        const { token, user } = response.data;
+        try {
+            const response = await api.post('/auth/register', { username, password, name });
+            const { token, user: userData } = response.data;
 
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
-        setUser(user);
+            localStorage.setItem('jwtToken', token);
+            localStorage.setItem('user', JSON.stringify(userData));
+            setUser(userData);
 
-        return user;
+            return userData;
+        } catch (error) {
+            console.error('Registration error:', error);
+            throw error;
+        }
     };
 
     const logout = () => {
-        localStorage.removeItem('token');
+        localStorage.removeItem('jwtToken');
         localStorage.removeItem('user');
         setUser(null);
         window.location.href = '/login';

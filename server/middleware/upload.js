@@ -1,105 +1,171 @@
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import { v2 as cloudinary } from 'cloudinary';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import dotenv from 'dotenv';
+import fs from 'fs';
+import { s3Client, S3_CONFIG } from '../config/s3.js';
+import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import logger from '../config/logger.js';
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-let uploader;
-let deleter;
-
-// ============== CLOUD STORAGE CONFIGURATION ==============
-if (process.env.CLOUDINARY_CLOUD_NAME) {
-    console.log('☁️ Using Cloud Storage (Cloudinary)');
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET
-    });
-
-    const storage = new CloudinaryStorage({
-        cloudinary: cloudinary,
-        params: {
-            folder: 'the-darji-uploads',
-            allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
-            resource_type: 'image'
-        }
-    });
-
-    uploader = multer({ storage: storage });
-
-    deleter = async (imageUrl) => {
-        if (!imageUrl) return;
-        try {
-            // Extract public_id from URL if possible, or just ignore since cloud doesn't need manual cleanup as much
-            // Cloudinary deletion requires public_id, which is harder to get from just URL without storing it.
-            // For now, we skip manual deletion on cloud or parse it if needed.
-            console.log('Skipping manual delete for cloud image:', imageUrl);
-        } catch (error) {
-            console.error('Error deleting cloud image:', error);
-        }
-    };
+// Ensure uploads directory exists for local storage
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
 }
-// ============== LOCAL STORAGE CONFIGURATION ==============
-else {
-    console.log('💾 Using Local Storage');
-    const uploadsDir = path.join(__dirname, '../../uploads');
-    const requirementsDir = path.join(uploadsDir, 'requirements');
-    const trialNotesDir = path.join(uploadsDir, 'trial-notes');
 
-    [uploadsDir, requirementsDir, trialNotesDir].forEach(dir => {
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+// File filter for validation
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|pdf|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (extname && mimetype) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only images (JPEG, PNG, WEBP) and PDFs are allowed'));
+    }
+};
+
+// Multer configuration for memory storage (used for both local and S3)
+const multerConfig = {
+    storage: multer.memoryStorage(),
+    fileFilter,
+    limits: {
+        fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024, // 5MB default
+    },
+};
+
+export const upload = multer(multerConfig);
+
+/**
+ * Middleware to upload file to storage (local or S3)
+ * Use this after multer upload middleware
+ */
+export const uploadToStorage = async (req, res, next) => {
+    try {
+        if (!req.file && !req.files) {
+            return next();
         }
-    });
 
-    const storage = multer.diskStorage({
-        destination: function (req, file, cb) {
-            let uploadPath = requirementsDir;
-            if (req.url.includes('trial-notes') || req.originalUrl.includes('trial-notes')) {
-                uploadPath = trialNotesDir;
-            }
-            cb(null, uploadPath);
-        },
-        filename: function (req, file, cb) {
+        const files = req.files ? (Array.isArray(req.files) ? req.files : Object.values(req.files).flat()) : [req.file];
+        const uploadedFiles = [];
+
+        for (const file of files) {
+            if (!file) continue;
+
             const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-            const ext = path.extname(file.originalname);
-            cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+            const filename = file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname);
+
+            // Try S3 upload first if configured
+            if (S3_CONFIG.isConfigured && s3Client) {
+                try {
+                    const s3Key = `uploads/${filename}`;
+
+                    await s3Client.send(new PutObjectCommand({
+                        Bucket: S3_CONFIG.uploadsBucket,
+                        Key: s3Key,
+                        Body: file.buffer,
+                        ContentType: file.mimetype,
+                    }));
+
+                    logger.info(`File uploaded to S3: ${s3Key}`);
+
+                    uploadedFiles.push({
+                        fieldname: file.fieldname,
+                        filename,
+                        s3Key,
+                        url: `/uploads/${filename}`,
+                        storage: 'S3',
+                        size: file.size,
+                        mimetype: file.mimetype,
+                    });
+                } catch (s3Error) {
+                    logger.error(`S3 upload failed, falling back to local: ${s3Error.message}`);
+
+                    // Fallback to local storage
+                    const localPath = path.join(uploadsDir, filename);
+                    fs.writeFileSync(localPath, file.buffer);
+
+                    uploadedFiles.push({
+                        fieldname: file.fieldname,
+                        filename,
+                        path: `uploads/${filename}`,
+                        url: `/uploads/${filename}`,
+                        storage: 'Local',
+                        size: file.size,
+                        mimetype: file.mimetype,
+                    });
+                }
+            } else {
+                // Local storage only
+                const localPath = path.join(uploadsDir, filename);
+                fs.writeFileSync(localPath, file.buffer);
+
+                uploadedFiles.push({
+                    fieldname: file.fieldname,
+                    filename,
+                    path: `uploads/${filename}`,
+                    url: `/uploads/${filename}`,
+                    storage: 'Local',
+                    size: file.size,
+                    mimetype: file.mimetype,
+                });
+
+                logger.info(`File uploaded locally: ${filename}`);
+            }
         }
-    });
 
-    const fileFilter = (req, file, cb) => {
-        const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-        if (allowedMimes.includes(file.mimetype)) cb(null, true);
-        else cb(new Error('Invalid file type.'), false);
-    };
+        // Attach uploaded file info to request
+        if (req.file) {
+            req.uploadedFile = uploadedFiles[0];
+        }
+        if (req.files) {
+            req.uploadedFiles = uploadedFiles;
+        }
 
-    uploader = multer({
-        storage: storage,
-        fileFilter: fileFilter,
-        limits: { fileSize: 50 * 1024 * 1024 }
-    });
+        next();
+    } catch (error) {
+        logger.error(`Upload error: ${error.message}`);
+        next(error);
+    }
+};
 
-    deleter = (imageUrl) => {
-        if (!imageUrl) return;
-        try {
-            const filePath = path.join(__dirname, '../../', imageUrl);
+/**
+ * Delete file from storage (local or S3)
+ */
+export const deleteFile = async (fileInfo) => {
+    try {
+        if (!fileInfo) return;
+
+        // If it's an S3 file
+        if (fileInfo.s3Key || fileInfo.storage === 'S3') {
+            if (S3_CONFIG.isConfigured && s3Client) {
+                const key = fileInfo.s3Key || fileInfo.url.replace('/uploads/', 'uploads/');
+
+                await s3Client.send(new DeleteObjectCommand({
+                    Bucket: S3_CONFIG.uploadsBucket,
+                    Key: key,
+                }));
+
+                logger.info(`File deleted from S3: ${key}`);
+            }
+        }
+        // Local file
+        else {
+            const filePath = typeof fileInfo === 'string'
+                ? path.join(__dirname, '../../', fileInfo)
+                : path.join(__dirname, '../../', fileInfo.path || fileInfo.url);
+
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
-                console.log(`Deleted image: ${imageUrl}`);
+                logger.info(`File deleted locally: ${filePath}`);
             }
-        } catch (error) {
-            console.error('Error deleting image file:', error);
         }
-    };
-}
+    } catch (error) {
+        logger.error(`Error deleting file: ${error.message}`);
+    }
+};
 
-export const upload = uploader;
-export const deleteImageFile = deleter;
+// Legacy support - alias for old code
+export const deleteImageFile = deleteFile;

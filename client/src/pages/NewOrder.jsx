@@ -1,18 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-import { FiPlus, FiTrash2, FiSend, FiPackage, FiCalendar, FiUser, FiPhone, FiMail, FiMapPin, FiAlignLeft, FiImage, FiArrowLeft, FiCheckCircle, FiSave, FiClock } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiSend, FiPackage, FiCalendar, FiUser, FiPhone, FiMail, FiMapPin, FiAlignLeft, FiImage, FiArrowLeft, FiCheckCircle, FiSave, FiClock, FiActivity, FiSearch, FiDownload, FiSettings, FiEdit2, FiRotateCcw, FiEye, FiEyeOff } from 'react-icons/fi';
 import { useToast } from '../context/ToastContext';
+
+const DEFAULT_STANDARD_OUTFITS = [
+    { name: '3-Piece Suit', garments: ['Jacket', 'Pant', 'Waistcoat'] },
+    { name: '2-Piece Suit', garments: ['Jacket', 'Pant'] },
+    { name: 'Sherwani', garments: ['Sherwani', 'Pajama'] },
+    { name: 'Kurta Pajama', garments: ['Kurta', 'Pajama'] },
+    { name: 'Shirt & Pant', garments: ['Shirt', 'Pant'] },
+    { name: 'Safari Suit', garments: ['Safari Jacket', 'Pant'] },
+    { name: 'Trouser', garments: ['Pant'] }
+];
 
 export default function NewOrder() {
     const navigate = useNavigate();
     const { showToast } = useToast();
+
+    // Standards State (LocalStorage)
+    const [standardOutfits, setStandardOutfits] = useState(() => {
+        try {
+            const saved = localStorage.getItem('darji_standard_outfits');
+            return saved ? JSON.parse(saved) : DEFAULT_STANDARD_OUTFITS;
+        } catch (e) {
+            return DEFAULT_STANDARD_OUTFITS;
+        }
+    });
+
+    const standardInputRefs = React.useRef([]);
+
+    const [showManageStandardsModal, setShowManageStandardsModal] = useState(false);
+
+    useEffect(() => {
+        localStorage.setItem('darji_standard_outfits', JSON.stringify(standardOutfits));
+    }, [standardOutfits]);
+
     const [clients, setClients] = useState([]);
     const [garmentTypes, setGarmentTypes] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [showNewClient, setShowNewClient] = useState(false);
     const [showNewGarment, setShowNewGarment] = useState(false);
+    const [showCost, setShowCost] = useState(false); // Default hidden
     const [measurements, setMeasurements] = useState('');
     const [measurementTemplates, setMeasurementTemplates] = useState([]);
     const [showSaveTemplate, setShowSaveTemplate] = useState(false);
@@ -21,12 +51,23 @@ export default function NewOrder() {
     const [newStandardName, setNewStandardName] = useState('');
     const [newStandardFields, setNewStandardFields] = useState([{ label: '', value: '' }]);
 
+    // Search and Load State
+    const [showLoadModal, setShowLoadModal] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState({ clients: [], templates: [] });
+
     // Hardcoded Measurement Standards
     const MEASUREMENT_STANDARDS = {
         'Shirt': ['Length', 'Chest', 'Waist', 'Shoulder', 'Sleeves', 'Neck', 'Across Back', 'Armhole', 'Cuff'],
         'Trouser': ['Length', 'Inseam L.', 'Waist', 'Front Rise', 'Hip', 'Thigh', 'Knee', 'Bottom'],
         'Coat': ['Length', 'Chest', 'Waist', 'Hip', 'Shoulder', 'Sleeves', 'Across Back', 'H. Back', 'Neck'],
-        'Jacket': ['Length', 'Chest', 'Waist', 'Hip', 'Shoulder', 'Sleeves', 'Across Back', 'H. Back', 'Neck']
+        'Jacket': ['Length', 'Chest', 'Waist', 'Hip', 'Shoulder', 'Sleeves', 'Across Back', 'H. Back', 'Neck'],
+        'Pant': ['Length', 'Inseam L.', 'Waist', 'Front Rise', 'Hip', 'Thigh', 'Knee', 'Bottom'],
+        'Sherwani': ['Length', 'Chest', 'Waist', 'Hip', 'Shoulder', 'Sleeves', 'Neck', 'Across Back'],
+        'Kurta': ['Length', 'Chest', 'Waist', 'Hip', 'Shoulder', 'Sleeves', 'Neck'],
+        'Pajama': ['Length', 'Waist', 'Hip', 'Thigh', 'Bottom'],
+        'Safari Jacket': ['Length', 'Chest', 'Waist', 'Hip', 'Shoulder', 'Sleeves', 'Neck', 'Across Back'],
+        'Waistcoat': ['Length', 'Chest', 'Waist', 'Shoulder', 'Neck', 'Across Back']
     };
 
     const [activeFields, setActiveFields] = useState([]);
@@ -34,7 +75,7 @@ export default function NewOrder() {
 
     // Form state
     const [selectedClient, setSelectedClient] = useState('');
-    const [items, setItems] = useState([{ garmentTypeId: '', quantity: 1, price: 0 }]);
+    const [items, setItems] = useState([{ garmentTypeId: '', quantity: 1, price: 0, cost: 0 }]);
     const [specialRequirements, setSpecialRequirements] = useState([{ note: '', image: null }]);
     const [trialDate, setTrialDate] = useState('');
     const [deliveryDate, setDeliveryDate] = useState('');
@@ -72,16 +113,17 @@ export default function NewOrder() {
     const fetchClients = async () => {
         try {
             const response = await api.get('/clients');
-            setClients(response.data);
+            setClients((response.data.clients || []).map(c => ({ ...c, id: c._id })));
         } catch (error) {
             console.error('Error fetching clients:', error);
+            showToast('Failed to load clients. Check DB connection.', 'error');
         }
     };
 
     const fetchGarmentTypes = async () => {
         try {
             const response = await api.get('/garments');
-            setGarmentTypes(response.data);
+            setGarmentTypes((response.data || []).map(g => ({ ...g, id: g._id })));
         } catch (error) {
             console.error('Error fetching garment types:', error);
         }
@@ -90,7 +132,7 @@ export default function NewOrder() {
     const fetchMeasurementTemplates = async () => {
         try {
             const response = await api.get('/measurement-templates');
-            setMeasurementTemplates(response.data);
+            setMeasurementTemplates((response.data || []).map(t => ({ ...t, id: t._id })));
         } catch (error) {
             console.error('Error fetching templates:', error);
         }
@@ -98,18 +140,69 @@ export default function NewOrder() {
 
     const fetchLastMeasurements = async (clientId) => {
         try {
-            const response = await api.get(`/measurement-templates/client/${clientId}/last`);
-            if (response.data && response.data.measurements) {
-                setMeasurements(response.data.measurements);
+            const response = await api.get('/orders', { params: { limit: 100 } });
+            const orders = response.data.orders || [];
+
+            // Filter for this client's orders that have measurements
+            const clientOrders = orders.filter(order => order.clientId === clientId && order.measurements);
+
+            if (clientOrders.length > 0) {
+                // Sort by creation date to get the latest
+                clientOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                const lastMsmt = clientOrders[0].measurements;
+                setMeasurements(lastMsmt);
+                showToast('Auto-loaded measurements from last order', 'info');
+
+                // Parse into Smart Form Fields
+                if (lastMsmt) {
+                    const lines = lastMsmt.split('\n');
+                    const parsed = lines.map(line => {
+                        const headerMatch = line.match(/^===\s+(.+)\s+===:?\s*$/);
+                        if (headerMatch) {
+                            return { label: `=== ${headerMatch[1]} ===`, value: '', isHeader: true };
+                        }
+                        const parts = line.split(':');
+                        if (parts.length < 2) return null;
+
+                        const label = parts[0].trim().replace(/^"|"$/g, '');
+                        const value = parts.slice(1).join(':').trim().replace(/^"|"$/g, '');
+                        return { label, value };
+                    }).filter(f => f && (f.label || f.isHeader));
+
+                    if (parsed.length > 0) {
+                        setActiveFields(parsed);
+                        setUseSmartForm(true);
+                    }
+                }
             }
         } catch (error) {
             console.error('Error fetching last measurements:', error);
         }
     };
 
+    const applyStandardOutfit = (standard) => {
+        let newFields = [];
+
+        standard.garments.forEach(garmentType => {
+            const fields = MEASUREMENT_STANDARDS[garmentType];
+            if (fields) {
+                newFields.push({ label: `=== ${garmentType.toUpperCase()} ===`, value: '', isHeader: true });
+                fields.forEach(f => newFields.push({ label: f, value: '' }));
+            }
+        });
+
+        if (newFields.length > 0) {
+            setActiveFields(newFields);
+            setUseSmartForm(true);
+            showToast(`${standard.name} template loaded`, 'success');
+        } else {
+            showToast(`No definition found for ${standard.name}`, 'warning');
+        }
+    };
+
     const saveAsTemplate = async () => {
-        if (!templateName.trim()) {
-            showToast('Please enter a template name', 'warning');
+        if (!templateName.trim() || templateName.trim().length < 3) {
+            showToast('Template name must be at least 3 characters', 'warning');
             return;
         }
 
@@ -117,7 +210,7 @@ export default function NewOrder() {
             await api.post('/measurement-templates', {
                 name: templateName,
                 clientId: selectedClient || null,
-                garmentTypeId: null,
+                garmentTypeId: null, // This was not in the instruction, but was in original mongoClient call
                 measurements: measurements
             });
 
@@ -132,25 +225,15 @@ export default function NewOrder() {
     };
 
     const loadGlobalTemplate = (template) => {
-        // Handle potential double-stringification from old server logic
         let rawMeasurements = template.measurements;
-        if (typeof rawMeasurements === 'string' && rawMeasurements.startsWith('"') && rawMeasurements.endsWith('"')) {
-            try {
-                // Try treating it as a JSON string first
-                rawMeasurements = JSON.parse(rawMeasurements);
-            } catch (e) {
-                // Fallback manual cleanup
-                rawMeasurements = rawMeasurements.slice(1, -1).replace(/\\n/g, '\n');
-            }
-        } else {
-            rawMeasurements = template.measurements;
-        }
+        // Basic cleanup if needed
+        if (typeof rawMeasurements !== 'string') rawMeasurements = '';
 
         const lines = rawMeasurements.split('\n');
         const parsed = lines.map(line => {
-            const [label, ...valParts] = line.split(':');
+            const [label] = line.split(':');
             const cleanLabel = (label?.trim() || '').replace(/^"|"$/g, '');
-            return { label: cleanLabel, value: '' }; // Load labels only, empty values for new order
+            return { label: cleanLabel, value: '' };
         }).filter(f => f.label);
 
         setActiveFields(parsed);
@@ -159,8 +242,8 @@ export default function NewOrder() {
     };
 
     const saveGlobalStandard = async () => {
-        if (!newStandardName.trim()) {
-            showToast('Please enter an outfit name', 'warning');
+        if (!newStandardName.trim() || newStandardName.trim().length < 3) {
+            showToast('Outfit name must be at least 3 characters', 'warning');
             return;
         }
 
@@ -175,7 +258,7 @@ export default function NewOrder() {
         try {
             await api.post('/measurement-templates', {
                 name: newStandardName,
-                clientId: null, // Global template
+                clientId: null,
                 garmentTypeId: null,
                 measurements: formattedMeasurements
             });
@@ -190,8 +273,6 @@ export default function NewOrder() {
             showToast('Failed to save outfit type', 'error');
         }
     };
-
-    const [showTemplateManager, setShowTemplateManager] = useState(false);
 
     const handleDeleteGlobalTemplate = async (e, templateId) => {
         e.stopPropagation();
@@ -208,7 +289,7 @@ export default function NewOrder() {
     };
 
     const handleDeleteTemplate = async (e, templateId) => {
-        e.preventDefault(); // Prevent dropdown from closing if inside
+        e.preventDefault();
         if (!confirm('Delete this saved template?')) return;
 
         try {
@@ -225,29 +306,18 @@ export default function NewOrder() {
         try {
             const response = await api.get(`/measurement-templates/${templateId}`);
             const template = response.data;
+            if (!template) return;
+
             let rawMeasurements = template.measurements;
-
-            // Handle potential double-stringification
-            if (typeof rawMeasurements === 'string' && rawMeasurements.startsWith('"') && rawMeasurements.endsWith('"')) {
-                try {
-                    rawMeasurements = JSON.parse(rawMeasurements);
-                } catch (e) {
-                    rawMeasurements = rawMeasurements.slice(1, -1).replace(/\\n/g, '\n');
-                }
-            }
-
             setMeasurements(rawMeasurements);
 
-            // Try to parse into smart form
             if (useSmartForm) {
                 const lines = rawMeasurements.split('\n');
                 const parsed = lines.map(line => {
-                    // Check for header
                     const headerMatch = line.match(/^===\s+(.+)\s+===:?\s*$/);
                     if (headerMatch) {
                         return { label: `=== ${headerMatch[1]} ===`, value: '', isHeader: true };
                     }
-
                     const [label, ...valParts] = line.split(':');
                     const cleanLabel = (label?.trim() || '').replace(/^"|"$/g, '');
                     const cleanValue = valParts.join(':').trim().replace(/^"|"$/g, '');
@@ -256,11 +326,43 @@ export default function NewOrder() {
 
                 if (parsed.length > 0) setActiveFields(parsed);
             }
-
             showToast('Template loaded', 'info');
         } catch (error) {
             console.error('Error loading template:', error);
             showToast('Failed to load template', 'error');
+        }
+    };
+
+    const handleSearchMeasurements = (e) => {
+        const query = (e.target.value || '').toLowerCase();
+        setSearchQuery(e.target.value);
+
+        if (!query) {
+            setSearchResults({ clients: [], templates: [] });
+            return;
+        }
+
+        // Search Clients
+        const matchedClients = clients.filter(c =>
+            (c.name || '').toLowerCase().includes(query) ||
+            (c.phone || '').includes(query)
+        );
+
+        // Search Templates
+        const matchedTemplates = measurementTemplates.filter(t =>
+            (t.name || '').toLowerCase().includes(query)
+        );
+
+        setSearchResults({ clients: matchedClients, templates: matchedTemplates });
+    };
+
+    const handleLoadClientMeasurements = (clientId) => {
+        const client = clients.find(c => (c._id === clientId) || (c.id === clientId));
+        if (client) {
+            setSelectedClient(client._id || client.id);
+            fetchLastMeasurements(client._id || client.id);
+            setShowLoadModal(false);
+            setSearchQuery('');
         }
     };
 
@@ -278,7 +380,6 @@ export default function NewOrder() {
     const loadStandardTemplate = (type) => {
         const standards = MEASUREMENT_STANDARDS[type];
         if (standards) {
-            // Append new section with header
             const newFields = [
                 ...activeFields,
                 { label: `=== ${type.toUpperCase()} ===`, value: '', isHeader: true },
@@ -290,11 +391,7 @@ export default function NewOrder() {
         }
     };
 
-
-
-
     const updateMeasurementField = (index, field, value) => {
-        // Use immutable update pattern to ensure React detects changes correctly
         const newFields = activeFields.map((f, i) =>
             i === index ? { ...f, [field]: value } : f
         );
@@ -305,15 +402,13 @@ export default function NewOrder() {
         setActiveFields([...activeFields, { label: '', value: '' }]);
     };
 
-
-
     const removeField = (index) => {
         const newFields = activeFields.filter((_, i) => i !== index);
         setActiveFields(newFields);
     };
 
     const handleAddItem = () => {
-        setItems([...items, { garmentTypeId: '', quantity: 1, price: 0 }]);
+        setItems([...items, { garmentTypeId: '', quantity: 1, price: 0, cost: 0 }]);
     };
 
     const handleRemoveItem = (index) => {
@@ -325,20 +420,18 @@ export default function NewOrder() {
     const handleItemChange = (index, field, value) => {
         const newItems = [...items];
         newItems[index][field] = value;
-
-        // Auto-fill price when garment type is selected
         if (field === 'garmentTypeId') {
-            const garment = garmentTypes.find(g => g.id === value);
+            const garment = garmentTypes.find(g => g.id === value || g._id === value);
             if (garment) {
                 newItems[index].price = garment.price;
+                newItems[index].cost = garment.cost || 0;
             }
         }
-
         setItems(newItems);
     };
 
     const handleAddRequirement = () => {
-        setSpecialRequirements([...specialRequirements, { note: '', image: null }]);
+        setSpecialRequirements([...specialRequirements, { note: '', images: [] }]);
     };
 
     const handleRemoveRequirement = (index) => {
@@ -353,9 +446,13 @@ export default function NewOrder() {
         setSpecialRequirements(newRequirements);
     };
 
-    const handleRequirementImageChange = (index, file) => {
+    const handleRequirementImageChange = (index, files) => {
         const newRequirements = [...specialRequirements];
-        newRequirements[index].image = file;
+        // Convert FileList to Array
+        const fileArray = Array.from(files);
+        newRequirements[index].images = fileArray;
+        // Legacy support for single image preview if needed immediately
+        newRequirements[index].image = fileArray[0] || null;
         setSpecialRequirements(newRequirements);
     };
 
@@ -375,36 +472,96 @@ export default function NewOrder() {
         setAdditionalServiceItems(newServices);
     };
 
-    const calculateTotal = () => {
-        const stitchingTotal = items.reduce((total, item) => {
-            const subtotal = item.quantity * item.price;
-            return total + subtotal;
-        }, 0);
-        const servicesTotal = additionalServiceItems.reduce((total, service) => {
-            return total + (parseFloat(service.amount) || 0);
-        }, 0);
-        return stitchingTotal + servicesTotal;
-    };
-
-    const handleCreateClient = async (e) => {
-        e.preventDefault();
-        try {
-            const response = await api.post('/clients', newClient);
-            setClients([...clients, response.data]);
-            setSelectedClient(response.data.id);
-            setShowNewClient(false);
-            setNewClient({ name: '', phone: '', email: '', address: '' });
-        } catch (error) {
-            setError(error.response?.data?.error || 'Failed to create client');
+    const handleRestoreDefaults = () => {
+        if (window.confirm('Are you sure you want to restore default standard outfits? This will remove all custom changes to this list.')) {
+            setStandardOutfits(DEFAULT_STANDARD_OUTFITS);
+            showToast('Restored default standards', 'success');
         }
     };
 
+    const handleDeleteStandard = (index) => {
+        if (window.confirm('Delete this standard outfit button?')) {
+            const newStandards = standardOutfits.filter((_, i) => i !== index);
+            setStandardOutfits(newStandards);
+            showToast('Standard outfit removed', 'success');
+        }
+    };
+
+    const handleRenameStandard = (index, newName) => {
+        const newStandards = [...standardOutfits];
+        newStandards[index] = { ...newStandards[index], name: newName };
+        setStandardOutfits(newStandards);
+    };
+
+    const handleResetMeasurements = () => {
+        if (window.confirm('Clear all measurement values?')) {
+            const resetFields = activeFields.map(field => ({ ...field, value: field.isHeader ? '' : '' }));
+            setActiveFields(resetFields);
+            setMeasurements('');
+            showToast('Measurements reset', 'success');
+        }
+    };
+
+    const handleCreateClient = async (e) => {
+        // ... existing handleCreateClient code ...
+        e.preventDefault();
+        try {
+            const response = await api.post('/clients', newClient);
+            const result = response.data;
+            const createdClient = { ...newClient, id: result.insertedId, _id: result.insertedId };
+            setClients([...clients, createdClient]);
+            setSelectedClient(createdClient.id);
+            setShowNewClient(false);
+            setNewClient({ name: '', phone: '', email: '', address: '' });
+        } catch (error) {
+            setError('Failed to create client');
+        }
+    };
+
+    // ... (skipping unchanged parts)
+
+    <div className="flex justify-between items-center text-xs text-slate-400 px-1">
+        <div className="flex items-center gap-2">
+            <span className="font-medium bg-slate-100 px-2 py-1 rounded">
+                {useSmartForm ? `${activeFields.filter(f => !f.isHeader).length} active fields` : 'Manual Text Mode'}
+            </span>
+            {useSmartForm && (
+                <button
+                    type="button"
+                    onClick={handleResetMeasurements}
+                    className="text-rose-500 font-bold hover:underline hover:text-rose-600 flex items-center gap-1"
+                    title="Clear all values"
+                >
+                    <FiRotateCcw size={12} /> Reset
+                </button>
+            )}
+        </div>
+        <button
+            type="button"
+            onClick={() => setUseSmartForm(!useSmartForm)}
+            className="text-darji-accent font-bold hover:underline flex items-center gap-1"
+        >
+            <FiActivity /> {useSmartForm ? 'Switch to Text Editor' : 'Switch to Smart Form'}
+        </button>
+    </div>
+
+    // ... (skipping unchanged handlers for brevity in replacement if possible, but replace_file_content needs contiguous block)
+    // I will target the area where I can insert the handlers easily, 
+    // and then a separate replacement for the UI.
+    // Actually, I can insert the handlers before handleSubmit or similar.
+    // And the UI at the end.
+
+    // Let's do the UI insertion first as it is at the end of the JSX usually.
+    // Wait, I need to insert the handlers BEFORE they are used.
+    // I will place them before 'handleCreateClient' as shown above.
+
+
+
+
     const handleCreateGarment = async (e) => {
         e.preventDefault();
-
-        // Validate required fields
         if (!newGarment.name || !newGarment.price || !newGarment.cost) {
-            setError('Please fill in all required fields (Name, Price, and Cost)');
+            setError('Please fill in Name, Price, and Cost');
             return;
         }
 
@@ -416,28 +573,27 @@ export default function NewOrder() {
                 description: newGarment.description
             };
             const response = await api.post('/garments', garmentData);
-            setGarmentTypes([...garmentTypes, response.data]);
+            const result = response.data;
+            // Fix: Mongoose returns _id, not insertedId. Use result directly found from backend.
+            const createdGarment = { ...result, id: result._id };
 
-            // Auto-select the new garment in the first empty item
+            setGarmentTypes([...garmentTypes, createdGarment]);
+
+            // Auto-select
             const emptyItemIndex = items.findIndex(item => !item.garmentTypeId);
             if (emptyItemIndex !== -1) {
                 const newItems = [...items];
-                newItems[emptyItemIndex].garmentTypeId = response.data.id;
-                newItems[emptyItemIndex].price = response.data.price;
+                newItems[emptyItemIndex].garmentTypeId = createdGarment.id;
+                newItems[emptyItemIndex].price = createdGarment.price;
                 setItems(newItems);
             }
 
             setShowNewGarment(false);
             setNewGarment({ name: '', price: '', cost: '', description: '' });
-            setError(''); // Clear any previous errors
+            setError('');
         } catch (error) {
-            console.error('Error creating garment:', {
-                message: error.message,
-                response: error.response?.data
-            });
-            const errorMessage = error.response?.data?.error || error.message || 'Failed to create garment type';
-            setError(errorMessage);
-            showToast('Error creating garment: ' + errorMessage, 'error');
+            setError('Failed to create garment type');
+            showToast('Error creating garment', 'error');
         }
     };
 
@@ -447,72 +603,94 @@ export default function NewOrder() {
         setLoading(true);
 
         try {
+            const client = clients.find(c => c._id === selectedClient || c.id === selectedClient);
+            if (!client) throw new Error("Please select a client");
+
+            // Prepare form data for multipart upload (images + order data)
             const formData = new FormData();
 
-            // Add basic order data
-            formData.append('clientId', selectedClient);
-            formData.append('trialDate', trialDate || '');
-            formData.append('deliveryDate', deliveryDate || '');
-            formData.append('advance', parseFloat(advance) || 0);
-
-            // Add items as JSON
-            formData.append('items', JSON.stringify(items.map(item => ({
-                garmentTypeId: item.garmentTypeId,
-                quantity: item.quantity,
-                price: item.price,
-                subtotal: item.price * item.quantity
-            }))));
-
-            // Add additional services as JSON
-            const validServices = additionalServiceItems
-                .filter(service => service.description.trim() && service.amount > 0)
-                .map(service => ({
-                    description: service.description.trim(),
-                    amount: parseFloat(service.amount),
-                    cost: parseFloat(service.cost) || 0
+            // Calculate totals
+            const itemsTotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * parseInt(item.quantity)), 0);
+            const services = additionalServiceItems
+                .filter(s => s.description.trim() && s.amount > 0)
+                .map(s => ({
+                    description: s.description,
+                    amount: parseFloat(s.amount),
+                    cost: parseFloat(s.cost || 0)
                 }));
-            formData.append('additionalServiceItems', JSON.stringify(validServices));
+            const servicesTotal = services.reduce((sum, s) => sum + s.amount, 0);
+            const totalOrderAmount = itemsTotal + servicesTotal;
 
-            // Add special requirements as JSON
-            const validRequirements = specialRequirements
-                .filter(req => req.note.trim())
-                .map(req => req.note.trim());
-            formData.append('specialRequirements', JSON.stringify(validRequirements));
+            // Add order metadata as JSON string
+            const orderMetadata = {
+                clientId: selectedClient,
+                client: { name: client.name, phone: client.phone, email: client.email, address: client.address },
+                items: items.map(item => {
+                    const garment = garmentTypes.find(g => g._id === item.garmentTypeId || g.id === item.garmentTypeId);
+                    return {
+                        garmentTypeId: item.garmentTypeId,
+                        garmentType: item.garmentTypeId, // Send ID string to satisfy Zod validator
+                        quantity: parseInt(item.quantity),
+                        price: parseFloat(item.price),
+                        subtotal: parseFloat(item.price) * parseInt(item.quantity),
+                        cost: parseFloat(item.cost || 0)
+                    };
+                }),
+                additionalServices: services,
+                measurements: measurements.trim(),
+                specialRequirements: specialRequirements
+                    .filter(r => r.note.trim() || r.image)
+                    .map(r => ({ note: r.note.trim() || (r.image ? 'See attached image' : '') })),
+                totalAmount: totalOrderAmount,
+                finalAmount: totalOrderAmount, // Default final amount to total amount
+                trialDate: trialDate ? new Date(trialDate).toISOString() : null,
+                deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : null,
+                advance: parseFloat(advance) || 0,
+                status: 'Pending'
+            };
 
-            // Add requirement images
-            specialRequirements.forEach((req, index) => {
-                if (req.image) {
-                    formData.append('requirementImages', req.image);
-                    formData.append('requirementImageIndices', index.toString());
+            formData.append('orderData', JSON.stringify(orderMetadata));
+
+            // Add special requirement images if any
+            let requirementIndex = 0;
+            for (const req of specialRequirements) {
+                if (req.note.trim() || (req.images && req.images.length > 0) || req.image) {
+                    formData.append(`requirements[${requirementIndex}][note]`, req.note.trim());
+
+                    // Handle multiple images
+                    if (req.images && req.images.length > 0) {
+                        req.images.forEach(img => {
+                            formData.append(`requirements[${requirementIndex}][images]`, img);
+                        });
+                    }
+                    // Fallback/Legacy single image
+                    else if (req.image) {
+                        formData.append(`requirements[${requirementIndex}][image]`, req.image);
+                    }
+
+                    requirementIndex++;
                 }
-            });
-
-            // Add measurements
-            if (measurements.trim()) {
-                formData.append('measurements', measurements.trim());
             }
 
-            const response = await api.post('/orders', formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
-                }
+            // Backend will generate PDF, upload to S3, and create order
+            await api.post('/orders', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
             });
 
-            // Show success and redirect
-            showToast('Order created successfully! Invoice generated.', 'success');
+            showToast('Order created successfully!', 'success');
             navigate('/orders');
         } catch (error) {
-            setError(error.response?.data?.error || 'Failed to create order');
+            console.error(error);
+            const errorMsg = error.response?.data?.error || error.message || 'Failed to create order';
+            setError(errorMsg);
+            showToast(errorMsg, 'error');
         } finally {
             setLoading(false);
         }
     };
 
-
-
-
     return (
-        <div className="fade-in max-w-5xl mx-auto pb-20 md:pb-0">
+        <div className="fade-in w-full max-w-full mx-auto pb-6 md:pb-0 overflow-x-hidden px-3 md:px-0">
             {/* Header */}
             <div className="mb-8 pt-2">
                 <button
@@ -533,104 +711,98 @@ export default function NewOrder() {
 
             <form onSubmit={handleSubmit} className="space-y-8">
                 {/* Client Selection */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center">
                         <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
                         Client Information
                     </h2>
 
                     {!showNewClient ? (
                         <div className="space-y-4">
-                            <label className="block text-sm font-bold text-gray-700">Select Client</label>
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                                    <FiUser />
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Select Client</label>
+                            <div className="flex gap-3">
+                                <div className="relative flex-1">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                        <FiUser />
+                                    </div>
+                                    <select
+                                        value={selectedClient}
+                                        onChange={(e) => setSelectedClient(e.target.value)}
+                                        className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-darji-accent focus:border-transparent transition-all bg-slate-50 hover:bg-white text-slate-800 font-medium"
+                                        required
+                                    >
+                                        <option value="">-- Choose a client --</option>
+                                        {clients.map(client => (
+                                            <option key={client._id || client.id} value={client._id || client.id}>
+                                                {client.name} - {client.phone}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
-                                <select
-                                    value={selectedClient}
-                                    onChange={(e) => setSelectedClient(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent focus:border-transparent transition-all bg-gray-50 hover:bg-white"
-                                    required
+                                <button
+                                    type="button"
+                                    onClick={() => setShowNewClient(true)}
+                                    className="px-4 py-2 bg-indigo-50 text-darji-accent rounded-xl font-bold text-sm hover:bg-indigo-100 transition-colors border border-indigo-100 whitespace-nowrap flex items-center gap-2"
                                 >
-                                    <option value="">-- Choose a client --</option>
-                                    {clients.map(client => (
-                                        <option key={client.id} value={client.id}>
-                                            {client.name} - {client.phone}
-                                        </option>
-                                    ))}
-                                </select>
+                                    <FiPlus /> New Client
+                                </button>
                             </div>
-
-                            <button
-                                type="button"
-                                onClick={() => setShowNewClient(true)}
-                                className="inline-flex items-center text-darji-accent font-bold text-sm hover:underline mt-2"
-                            >
-                                <FiPlus className="mr-1" /> Add New Client
-                            </button>
                         </div>
                     ) : (
-                        <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100 space-y-4">
+                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4 relative">
                             <div className="flex justify-between items-center mb-2">
-                                <h3 className="font-bold text-darji-primary">New Client Details</h3>
-                                <button type="button" onClick={() => setShowNewClient(false)} className="text-gray-400 hover:text-red-500"><FiTrash2 /></button>
+                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                    <div className="p-1.5 bg-indigo-100 text-darji-accent rounded-lg"><FiUser /></div>
+                                    New Client Details
+                                </h3>
+                                <button type="button" onClick={() => setShowNewClient(false)} className="text-slate-400 hover:text-red-500 transition-colors bg-white p-2 rounded-lg shadow-sm">
+                                    <FiTrash2 />
+                                </button>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Name *</label>
-                                    <div className="relative">
-                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><FiUser /></div>
-                                        <input
-                                            type="text"
-                                            value={newClient.name}
-                                            onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}
-                                            className="w-full pl-10 pr-4 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
-                                            required
-                                        />
-                                    </div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Name *</label>
+                                    <input
+                                        type="text"
+                                        value={newClient.name}
+                                        onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}
+                                        className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
+                                        required
+                                    />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Phone *</label>
-                                    <div className="relative">
-                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><FiPhone /></div>
-                                        <input
-                                            type="tel"
-                                            value={newClient.phone}
-                                            onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })}
-                                            className="w-full pl-10 pr-4 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
-                                            required
-                                        />
-                                    </div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Phone *</label>
+                                    <input
+                                        type="tel"
+                                        value={newClient.phone}
+                                        onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })}
+                                        className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
+                                        required
+                                    />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Email</label>
-                                    <div className="relative">
-                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><FiMail /></div>
-                                        <input
-                                            type="email"
-                                            value={newClient.email}
-                                            onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}
-                                            className="w-full pl-10 pr-4 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
-                                        />
-                                    </div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Email</label>
+                                    <input
+                                        type="email"
+                                        value={newClient.email}
+                                        onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}
+                                        className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
+                                    />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Address</label>
-                                    <div className="relative">
-                                        <div className="absolute top-3 left-0 pl-3 flex items-start pointer-events-none text-gray-400"><FiMapPin /></div>
-                                        <textarea
-                                            value={newClient.address}
-                                            onChange={(e) => setNewClient({ ...newClient, address: e.target.value })}
-                                            className="w-full pl-10 pr-4 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
-                                            rows="1"
-                                        />
-                                    </div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Address</label>
+                                    <textarea
+                                        value={newClient.address}
+                                        onChange={(e) => setNewClient({ ...newClient, address: e.target.value })}
+                                        className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
+                                        rows="1"
+                                    />
                                 </div>
                             </div>
                             <button
                                 type="button"
                                 onClick={handleCreateClient}
-                                className="w-full py-3 bg-darji-accent text-white font-bold rounded-xl hover:bg-blue-600 shadow-md transition-all active:scale-95"
+                                className="w-full py-3 bg-darji-accent text-white font-bold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 transition-all active:scale-[0.99] mt-2"
                             >
                                 Save New Client
                             </button>
@@ -639,31 +811,56 @@ export default function NewOrder() {
                 </div>
 
                 {/* Order Items */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100">
-                    <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-                        <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
-                        Order Items
-                    </h2>
+                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100">
+                    <div className="flex justify-between items-center mb-6">
+                        <div className="flex items-center gap-4">
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center">
+                                <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
+                                Order Items
+                            </h2>
+                            <button
+                                type="button"
+                                onClick={() => setShowCost(!showCost)}
+                                className="text-slate-300 hover:text-slate-500 transition-colors p-1.5 rounded-full hover:bg-slate-50"
+                                title={showCost ? "Hide Cost" : "Show Cost"}
+                            >
+                                {showCost ? <FiEyeOff size={16} /> : <FiEye size={16} />}
+                            </button>
+                        </div>
+                        {!showNewGarment && (
+                            <button type="button" onClick={() => setShowNewGarment(true)} className="text-xs font-bold text-darji-accent hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors border border-indigo-100">
+                                + Create Garment Type
+                            </button>
+                        )}
+                    </div>
 
-                    <div className="space-y-6">
+                    <div className="space-y-4">
+                        {/* Legend for desktop */}
+                        <div className="hidden md:grid grid-cols-12 gap-4 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                            <div className="col-span-5">Garment</div>
+                            <div className="col-span-2">Qty</div>
+                            <div className="col-span-2">Price</div>
+                            <div className="col-span-2">{showCost ? "Cost (Internal)" : ""}</div>
+                            <div className="col-span-1 text-right">Total</div>
+                        </div>
+
                         {items.map((item, index) => (
-                            <div key={index} className="bg-gray-50 p-4 rounded-xl border border-gray-200 relative group transition-all hover:border-darji-accent/50 hover:shadow-sm">
-                                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start md:items-end">
+                            <div key={index} className="bg-white md:bg-slate-50 p-4 md:px-4 md:py-3 rounded-xl border border-slate-200 relative group transition-all hover:border-darji-accent/30 hover:shadow-sm">
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                                     <div className="md:col-span-5">
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Garment Type</label>
                                         <div className="relative">
-                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                                                 <FiPackage />
                                             </div>
                                             <select
                                                 value={item.garmentTypeId}
                                                 onChange={(e) => handleItemChange(index, 'garmentTypeId', e.target.value)}
-                                                className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent"
+                                                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-medium text-slate-700"
                                                 required
                                             >
-                                                <option value="">-- Select --</option>
+                                                <option value="">-- Select Garment --</option>
                                                 {garmentTypes.map(garment => (
-                                                    <option key={garment.id} value={garment.id}>
+                                                    <option key={garment._id || garment.id} value={garment._id || garment.id}>
                                                         {garment.name} (₹{garment.price})
                                                     </option>
                                                 ))}
@@ -671,35 +868,53 @@ export default function NewOrder() {
                                         </div>
                                     </div>
 
-                                    <div className="md:col-span-2">
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Qty</label>
+                                    <div className="md:col-span-2 relative">
+                                        <label className="md:hidden text-xs font-bold text-slate-500 mb-1 block">Qty</label>
                                         <input
                                             type="number"
                                             min="1"
                                             value={item.quantity}
                                             onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
-                                            className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent text-center font-bold"
+                                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent text-center font-bold text-slate-800"
                                             required
                                         />
                                     </div>
 
-                                    <div className="md:col-span-3">
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Price (₹)</label>
+                                    <div className="md:col-span-2">
+                                        <label className="md:hidden text-xs font-bold text-slate-500 mb-1 block">Price</label>
                                         <div className="relative">
-                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400 font-bold text-xs">₹</div>
+                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 font-bold text-xs">₹</div>
                                             <input
                                                 type="number"
                                                 step="0.01"
                                                 value={item.price}
                                                 onChange={(e) => handleItemChange(index, 'price', e.target.value)}
-                                                className="w-full pl-8 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-medium"
+                                                className="w-full pl-7 pr-3 py-2.5 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-medium text-slate-700 text-sm"
                                                 required
                                             />
                                         </div>
                                     </div>
 
                                     <div className="md:col-span-2">
-                                        <div className="bg-white px-3 py-2.5 rounded-lg border border-gray-200 font-bold text-gray-800 text-center">
+                                        {showCost && (
+                                            <>
+                                                <label className="md:hidden text-xs font-bold text-slate-500 mb-1 block">Cost</label>
+                                                <div className="relative">
+                                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-300 font-bold text-xs">₹</div>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        value={item.cost}
+                                                        onChange={(e) => handleItemChange(index, 'cost', e.target.value)}
+                                                        className="w-full pl-7 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-slate-300 font-medium text-sm text-slate-500 focus:bg-white transition-colors"
+                                                    />
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    <div className="md:col-span-1 text-right">
+                                        <div className="text-sm font-black text-slate-800">
                                             ₹{(item.quantity * item.price).toFixed(0)}
                                         </div>
                                     </div>
@@ -707,33 +922,31 @@ export default function NewOrder() {
                                     <button
                                         type="button"
                                         onClick={() => handleRemoveItem(index)}
-                                        className="absolute -top-2 -right-2 p-1.5 bg-white text-red-500 shadow-md rounded-full border border-gray-100 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                        className="absolute -top-2 -right-2 md:top-auto md:right-auto md:relative md:ml-2 p-1.5 bg-white text-rose-500 shadow-sm rounded-full border border-slate-100 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-rose-50 hover:border-rose-100"
                                         disabled={items.length === 1}
+                                        title="Remove Item"
                                     >
                                         <FiTrash2 size={16} />
                                     </button>
                                 </div>
-
-                                {!showNewGarment && (
-                                    <button type="button" onClick={() => setShowNewGarment(true)} className="text-xs font-bold text-darji-accent mt-2 hover:underline">
-                                        + New Garment Type
-                                    </button>
-                                )}
                             </div>
                         ))}
                     </div>
 
                     {showNewGarment && (
-                        <div className="mt-4 p-4 border border-darji-accent border-dashed rounded-xl bg-blue-50/30">
-                            <h4 className="font-bold text-sm text-darji-primary mb-3">Create New Garment Type</h4>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                <input type="text" placeholder="Name *" value={newGarment.name} onChange={(e) => setNewGarment({ ...newGarment, name: e.target.value })} className="px-3 py-2 rounded-lg border border-gray-300 text-sm" />
-                                <input type="number" placeholder="Price *" value={newGarment.price} onChange={(e) => setNewGarment({ ...newGarment, price: e.target.value })} className="px-3 py-2 rounded-lg border border-gray-300 text-sm" />
-                                <input type="number" placeholder="Cost *" value={newGarment.cost} onChange={(e) => setNewGarment({ ...newGarment, cost: e.target.value })} className="px-3 py-2 rounded-lg border border-gray-300 text-sm" />
-                                <div className="flex gap-2">
-                                    <button type="button" onClick={handleCreateGarment} className="flex-1 bg-darji-accent text-white rounded-lg text-sm font-bold shadow-sm">Save</button>
-                                    <button type="button" onClick={() => setShowNewGarment(false)} className="flex-1 bg-white text-gray-600 border border-gray-300 rounded-lg text-sm font-bold">Cancel</button>
-                                </div>
+                        <div className="mt-6 p-6 border border-indigo-100 border-dashed rounded-2xl bg-indigo-50/30 animate-in fade-in slide-in-from-top-2">
+                            <div className="flex justify-between items-center mb-4">
+                                <h4 className="font-bold text-darji-primary flex items-center gap-2">
+                                    <FiPackage className="text-darji-accent" />
+                                    New Garment Definition
+                                </h4>
+                                <button onClick={() => setShowNewGarment(false)} className="text-slate-400 hover:text-slate-600"><FiX /></button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <input type="text" placeholder="Name (e.g. Safari Suit)" value={newGarment.name} onChange={(e) => setNewGarment({ ...newGarment, name: e.target.value })} className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-darji-accent" />
+                                <input type="number" placeholder="Price (₹)" value={newGarment.price} onChange={(e) => setNewGarment({ ...newGarment, price: e.target.value })} className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-darji-accent" />
+                                <input type="number" placeholder="Cost (₹)" value={newGarment.cost} onChange={(e) => setNewGarment({ ...newGarment, cost: e.target.value })} className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-darji-accent" />
+                                <button type="button" onClick={handleCreateGarment} className="bg-darji-accent text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-colors">Save Garment</button>
                             </div>
                         </div>
                     )}
@@ -741,558 +954,624 @@ export default function NewOrder() {
                     <button
                         type="button"
                         onClick={handleAddItem}
-                        className="mt-6 w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-blue-50/50 transition-all active:scale-[0.99] flex items-center justify-center gap-2"
+                        className="mt-6 w-full py-4 border-2 border-dashed border-slate-200 rounded-xl text-slate-500 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-slate-50 transition-all active:scale-[0.99] flex items-center justify-center gap-2"
                     >
                         <FiPlus size={20} /> Add Another Item
                     </button>
 
-                    <div className="mt-6 flex justify-end items-center">
-                        <span className="text-gray-500 font-medium mr-3">Subtotal:</span>
-                        <span className="text-2xl font-black text-gray-900">₹{items.reduce((acc, i) => acc + (i.price * i.quantity), 0).toFixed(2)}</span>
+                    <div className="mt-6 flex justify-end items-center pt-4 border-t border-slate-100">
+                        <span className="text-slate-500 font-medium mr-4 text-sm uppercase tracking-wide">Subtotal</span>
+                        <span className="text-2xl font-black text-slate-900">₹{items.reduce((acc, i) => acc + (i.price * i.quantity), 0).toFixed(2)}</span>
                     </div>
                 </div>
 
-                {/* Additional Services */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
-                    <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-                        <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
-                        Additional Services
-                    </h2>
-                    <div className="space-y-4">
-                        {additionalServiceItems.map((service, index) => (
-                            <div key={index} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative group">
-                                <button type="button" onClick={() => handleRemoveService(index)} className="absolute -top-2 -right-2 p-1.5 bg-white text-red-500 shadow rounded-full border border-gray-100 opacity-0 group-hover:opacity-100 hover:bg-red-50 transition-all"><FiTrash2 size={16} /></button>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Description</label>
-                                        <input type="text" value={service.description} onChange={(e) => handleServiceChange(index, 'description', e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-medium text-gray-800" placeholder="e.g. Lining Fabric" />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Amount (₹)</label>
-                                            <input type="number" value={service.amount} onChange={(e) => handleServiceChange(index, 'amount', e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-bold text-gray-800" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Cost (₹)</label>
-                                            <input type="number" value={service.cost} onChange={(e) => handleServiceChange(index, 'cost', e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent text-sm text-gray-600" />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                        <button
-                            type="button"
-                            onClick={handleAddService}
-                            className="mt-2 w-full py-3 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-blue-50/30 transition-all flex items-center justify-center gap-2 text-sm"
-                        >
-                            <FiPlus /> Add Service
-                        </button>
-                    </div>
-                </div>
-
-                {/* Dates & Payment */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300">
-                    <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-                        <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
-                        Dates & Payment
-                    </h2>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-                        {/* Dates */}
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Trial Date</label>
-                                <div className="relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><FiCalendar /></div>
-                                    <input type="date" value={trialDate} onChange={(e) => setTrialDate(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent" />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Delivery Date</label>
-                                <div className="relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><FiCheckCircle /></div>
-                                    <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent" />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Payment */}
-                        <div className="bg-gray-50 p-6 rounded-xl border border-gray-200">
-                            <div className="flex justify-between items-center mb-4">
-                                <span className="text-gray-600 font-medium">Grand Total</span>
-                                <span className="text-2xl font-black text-gray-900">₹{calculateTotal().toFixed(2)}</span>
-                            </div>
-
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Advance Payment (₹)</label>
-                            <div className="relative mb-4">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400 font-bold">₹</div>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    max={calculateTotal()}
-                                    value={advance}
-                                    onChange={(e) => setAdvance(e.target.value)}
-                                    className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 font-bold text-lg text-green-700"
-                                    placeholder="0"
-                                />
-                            </div>
-
-                            <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-                                <span className="text-sm font-bold text-gray-500">Balance Due</span>
-                                <span className="text-xl font-bold text-red-500">₹{(calculateTotal() - (parseFloat(advance) || 0)).toFixed(2)}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Special Requirements Section */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-500 relative overflow-hidden">
-                    <div className="absolute top-0 bottom-0 left-0 w-1 bg-gradient-to-b from-darji-accent to-darji-primary"></div>
-                    <div className="flex justify-between items-center mb-6">
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-800">Special Requirements</h2>
-                            <p className="text-sm text-gray-500 mt-1">Measurements notes & style preferences</p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleAddRequirement}
-                            className="flex items-center space-x-2 bg-blue-50 text-darji-accent px-4 py-2 rounded-lg hover:bg-blue-100 transition-colors font-bold text-sm"
-                        >
-                            <FiPlus />
-                            <span>Add Note</span>
-                        </button>
-                    </div>
-
-                    <div className="space-y-4">
-                        {specialRequirements.map((req, index) => (
-                            <div key={index} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all group">
-                                <div className="flex items-start gap-4">
-                                    <div className="flex-shrink-0 w-8 h-8 bg-darji-accent text-white rounded-full flex items-center justify-center font-bold text-sm shadow-sm">
-                                        {index + 1}
-                                    </div>
-                                    <div className="flex-1 space-y-3">
-                                        <div className="relative">
-                                            <div className="absolute top-3 left-0 pl-3 flex items-start pointer-events-none text-gray-400"><FiAlignLeft /></div>
-                                            <textarea
-                                                value={req.note}
-                                                onChange={(e) => handleRequirementChange(index, 'note', e.target.value)}
-                                                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-darji-accent text-gray-800 font-medium"
-                                                placeholder="e.g., Stand collar, Side pockets..."
-                                                rows="2"
-                                            />
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <label className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors border border-gray-200">
-                                                <FiImage className="text-gray-500" />
-                                                <span className="text-xs font-bold text-gray-600">Attach Image</span>
-                                                <input type="file" className="hidden" accept="image/*" onChange={(e) => handleRequirementImageChange(index, e.target.files[0])} />
-                                            </label>
-                                            {req.image && <span className="text-xs text-green-600 font-medium truncate max-w-[150px]">✓ {req.image.name}</span>}
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleRemoveRequirement(index)}
-                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                        disabled={specialRequirements.length === 1}
-                                    >
-                                        <FiTrash2 />
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Measurements & Templates Section */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-600">
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                {/* Measurements */}
+                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                        <h2 className="text-xl font-bold text-slate-800 flex items-center">
                             <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
                             Measurements
                         </h2>
-                        <div className="flex bg-gray-100 rounded-lg p-1">
-                            <button
-                                type="button"
-                                onClick={() => setUseSmartForm(true)}
-                                className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${useSmartForm ? 'bg-white text-darji-accent shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                            >
-                                Smart Form
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto">
+                            <button type="button" onClick={() => setShowNewStandardModal(true)} className="px-4 py-2.5 sm:py-2 text-xs font-bold bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors flex items-center justify-center gap-2">
+                                <FiPlus /> New Standard
                             </button>
-                            <button
-                                type="button"
-                                onClick={() => { setUseSmartForm(false); setActiveFields([]); }}
-                                className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${!useSmartForm ? 'bg-white text-darji-accent shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                            >
-                                Text Mode
+                            <button type="button" onClick={() => setShowLoadModal(true)} className="px-4 py-2.5 sm:py-2 text-xs font-bold bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2">
+                                <FiDownload /> Load Template
+                            </button>
+                            <button type="button" onClick={() => setShowSaveTemplate(true)} className="px-4 py-2.5 sm:py-2 text-xs font-bold bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2">
+                                <FiCheckCircle /> Save Template
                             </button>
                         </div>
                     </div>
 
-                    {/* Quick Load Buttons with Add Feature */}
-                    {useSmartForm && (
-                        <div className="mb-6">
-                            <div className="flex justify-between items-end mb-3">
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Quick Load Standard Outfit</label>
+                    <div className="space-y-6">
+                        {/* Quick Load Toolbar */}
+                        <div className="flex flex-wrap gap-2 pb-4 border-b border-slate-100 items-center">
+                            <div className="flex items-center gap-2 mr-2">
+                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Quick Load:</div>
                                 <button
                                     type="button"
-                                    onClick={() => setShowNewStandardModal(true)}
-                                    className="text-xs font-bold text-darji-accent hover:underline flex items-center gap-1"
+                                    onClick={() => setShowManageStandardsModal(true)}
+                                    className="p-1 text-slate-400 hover:text-darji-accent hover:bg-indigo-50 rounded transition-colors"
+                                    title="Manage Standards"
                                 >
-                                    <FiPlus /> Add New Outfit
+                                    <FiSettings size={14} />
                                 </button>
                             </div>
-                            <div className="flex flex-wrap gap-3">
-                                {/* Hardcoded Standards */}
-                                {Object.keys(MEASUREMENT_STANDARDS).map(type => (
-                                    <button
-                                        key={type}
-                                        type="button"
-                                        onClick={() => loadStandardTemplate(type)}
-                                        className="group relative px-4 py-2.5 bg-gray-50 border border-gray-200 hover:border-darji-accent/50 hover:bg-white text-gray-600 rounded-xl font-bold text-sm transition-all shadow-sm hover:shadow hover:-translate-y-0.5"
-                                    >
-                                        <span className="group-hover:text-darji-accent transition-colors">+ {type}</span>
-                                    </button>
-                                ))}
+                            {standardOutfits.map((std, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => applyStandardOutfit(std)}
+                                    className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:border-darji-accent hover:text-darji-accent hover:shadow-sm transition-all shadow-sm"
+                                >
+                                    + {std.name}
+                                </button>
+                            ))}
+                        </div>
 
-                                {/* Custom Global Standards */}
-                                {measurementTemplates
-                                    .filter(t => !t.clientId) // Global templates (no client)
-                                    .map(template => (
-                                        <div key={template.id} className="group relative flex items-center bg-violet-50 border border-violet-100 rounded-xl transition-all shadow-sm hover:shadow hover:border-violet-300 hover:-translate-y-0.5 overflow-hidden cursor-pointer">
+                        {/* Smart Form UI */}
+                        {useSmartForm && (
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-6 bg-slate-50/50 rounded-2xl border border-slate-100">
+                                {activeFields.map((field, index) => (
+                                    field.isHeader ? (
+                                        <div key={index} className="col-span-full mt-4 mb-2 border-b border-slate-200 pb-2 flex items-center gap-2">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-darji-accent"></div>
+                                            <h4 className="font-bold text-xs text-slate-800 uppercase tracking-widest">{field.label.replace(/===/g, '').trim()}</h4>
+                                        </div>
+                                    ) : (
+                                        <div key={index} className="relative group/field bg-white p-1 rounded-xl shadow-sm border border-slate-100 focus-within:ring-2 focus-within:ring-darji-accent transition-shadow">
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase px-2 pt-1 truncate" title={field.label}>{field.label}</label>
+                                            <input
+                                                type="text"
+                                                value={field.value}
+                                                onChange={(e) => updateMeasurementField(index, 'value', e.target.value)}
+                                                className="w-full px-2 py-1.5 bg-transparent border-none focus:ring-0 font-mono text-sm font-bold text-slate-800 placeholder-slate-300"
+                                                placeholder="0.0"
+                                            />
                                             <button
                                                 type="button"
-                                                onClick={() => loadGlobalTemplate(template)}
-                                                className="px-4 py-2.5 text-violet-700 font-bold text-sm hover:bg-violet-100 transition-colors h-full"
+                                                onClick={() => removeField(index)}
+                                                className="absolute top-1 right-1 text-slate-300 hover:text-rose-500 opacity-0 group-hover/field:opacity-100 transition-opacity p-1"
                                             >
-                                                + {template.name}
-                                            </button>
-                                            <div className="w-[1px] h-4 bg-violet-200"></div>
-                                            <button
-                                                type="button"
-                                                onClick={(e) => handleDeleteGlobalTemplate(e, template.id)}
-                                                className="px-2 py-2.5 text-violet-400 hover:text-red-500 hover:bg-red-50 transition-colors h-full flex items-center justify-center"
-                                                title="Remove Outfit"
-                                            >
-                                                <FiTrash2 size={14} />
+                                                <FiTrash2 size={12} />
                                             </button>
                                         </div>
-                                    ))}
-                            </div>
-                        </div>
-                    )}
-
-
-
-                    {/* Client Templates & Save Button */}
-                    <div className="mb-6 space-y-4">
-                        {/* Dropdown Selector for Scalability */}
-                        <div className="flex gap-3">
-                            <div className="flex-1 relative">
-                                <select
-                                    value=""
-                                    onChange={(e) => e.target.value && loadTemplate(e.target.value)}
-                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent font-medium text-gray-700 cursor-pointer hover:border-gray-300 transition-colors appearance-none bg-white"
-                                >
-                                    <option value="">📏 Load client saved template...</option>
-                                    {measurementTemplates
-                                        .filter(t => t.clientId == selectedClient)
-                                        .map(template => (
-                                            <option key={template.id} value={template.id}>
-                                                {template.name}
-                                            </option>
-                                        ))}
-                                </select>
-                                <div className="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-gray-500">
-                                    <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Manage Templates Toggle */}
-                        {measurementTemplates.filter(t => t.clientId == selectedClient).length > 0 && (
-                            <div>
+                                    )
+                                ))}
                                 <button
                                     type="button"
-                                    onClick={() => setShowTemplateManager(!showTemplateManager)}
-                                    className="text-xs font-bold text-gray-500 hover:text-darji-accent flex items-center gap-1 transition-colors select-none"
+                                    onClick={addCustomField}
+                                    className="flex flex-col items-center justify-center p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:border-darji-accent hover:text-darji-accent hover:bg-white transition-all min-h-[70px] group"
                                 >
-                                    {showTemplateManager ? 'Hide' : 'Manage'} Saved Templates ({measurementTemplates.filter(t => t.clientId == selectedClient).length})
-                                </button>
-
-                                {showTemplateManager && (
-                                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 animate-in fade-in slide-in-from-top-2 duration-300 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                        {measurementTemplates
-                                            .filter(t => t.clientId == selectedClient)
-                                            .map(template => (
-                                                <div key={template.id} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-200 shadow-sm">
-                                                    <span className="text-sm font-medium text-gray-700 truncate">{template.name}</span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => handleDeleteTemplate(e, template.id)}
-                                                        className="text-gray-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-md transition-colors"
-                                                        title="Delete Template"
-                                                    >
-                                                        <FiTrash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            ))}
+                                    <div className="p-1.5 bg-slate-100 rounded-full group-hover:bg-indigo-50 transition-colors mb-1">
+                                        <FiPlus size={14} />
                                     </div>
-                                )}
+                                    <span className="text-[10px] font-bold">Add Field</span>
+                                </button>
                             </div>
                         )}
 
-                        <div className="flex gap-3 justify-end border-t border-gray-100 pt-4">
+                        {/* Raw Text Area */}
+                        <div className={useSmartForm ? 'hidden' : 'block'}>
+                            <textarea
+                                value={measurements}
+                                onChange={(e) => setMeasurements(e.target.value)}
+                                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-darji-accent font-mono text-sm leading-relaxed text-slate-700"
+                                rows="8"
+                                placeholder="Enter measurements manually..."
+                            />
+                        </div>
+
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 text-xs text-slate-400 px-1 pt-2">
+                            <div className="flex items-center gap-3 w-full md:w-auto">
+                                <span className="font-medium bg-slate-100 px-2.5 py-1.5 rounded-lg flex-1 md:flex-none text-center">
+                                    {useSmartForm ? `${activeFields.filter(f => !f.isHeader).length} active fields` : 'Manual Text Mode'}
+                                </span>
+                                {useSmartForm && (
+                                    <button
+                                        type="button"
+                                        onClick={handleResetMeasurements}
+                                        className="text-rose-500 font-bold hover:underline hover:text-rose-600 flex items-center gap-1 px-2 py-1.5 hover:bg-rose-50 rounded-lg transition-colors"
+                                        title="Clear all values"
+                                    >
+                                        <FiRotateCcw size={14} /> Reset
+                                    </button>
+                                )}
+                            </div>
                             <button
                                 type="button"
-                                onClick={() => setShowSaveTemplate(true)}
-                                disabled={!measurements.trim()}
-                                className="px-6 py-3 bg-darji-accent text-white rounded-xl hover:bg-blue-600 font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95 transform"
+                                onClick={() => setUseSmartForm(!useSmartForm)}
+                                className="w-full md:w-auto text-darji-accent font-bold hover:bg-indigo-50 px-3 py-2 rounded-lg transition-colors flex items-center justify-center md:justify-end gap-2 border border-transparent hover:border-indigo-100"
                             >
-                                <FiSave />
-                                <span className="hidden md:inline">Save Content as New Template</span>
+                                <FiActivity /> {useSmartForm ? 'Switch to Text Editor' : 'Switch to Smart Form'}
                             </button>
                         </div>
                     </div>
-
-
-                    {/* Smart Form Grid */}
-                    {useSmartForm ? (
-                        <div className="space-y-4">
-                            {activeFields.length > 0 ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {activeFields.map((field, index) => (
-                                        field.isHeader ? (
-                                            <div key={index} className="col-span-full mt-6 mb-2 flex items-center gap-4 animate-in fade-in slide-in-from-left-2">
-                                                <div className="h-px flex-1 bg-gray-200"></div>
-                                                <span className="font-black text-gray-500 text-xs tracking-widest uppercase bg-gray-50 px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
-                                                    {field.label.replace(/===/g, '').trim()}
-                                                </span>
-                                                <div className="h-px flex-1 bg-gray-200"></div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removeField(index)}
-                                                    className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"
-                                                    title="Remove Section"
-                                                >
-                                                    <FiTrash2 size={16} />
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <div key={index} className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-300">
-                                                <div className="flex-1 bg-gray-50 rounded-xl border border-gray-200 overflow-hidden flex focus-within:ring-2 focus-within:ring-darji-accent focus-within:bg-white transition-all">
-                                                    <input
-                                                        type="text"
-                                                        value={field.label}
-                                                        onChange={(e) => updateMeasurementField(index, 'label', e.target.value)}
-                                                        className="w-1/3 px-3 py-3 border-r border-gray-200 bg-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider outline-none text-right"
-                                                        placeholder="LABEL"
-                                                    />
-                                                    <input
-                                                        type="text"
-                                                        value={field.value}
-                                                        onChange={(e) => updateMeasurementField(index, 'value', e.target.value)}
-                                                        className="w-2/3 px-3 py-3 bg-transparent font-bold text-gray-900 outline-none"
-                                                        placeholder="Value"
-                                                    />
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removeField(index)}
-                                                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                                >
-                                                    <FiTrash2 />
-                                                </button>
-                                            </div>
-                                        )
-                                    ))}
-                                    <button
-                                        type="button"
-                                        onClick={addCustomField}
-                                        className="flex items-center justify-center gap-2 h-full min-h-[50px] border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-blue-50/30 transition-all text-sm"
-                                    >
-                                        <FiPlus /> Add Field
-                                    </button>
-                                </div>
-                            ) : (
-                                <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50">
-                                    <p className="text-gray-400 font-medium">Select a standard template above or start converting text</p>
-                                    <button
-                                        type="button"
-                                        onClick={addCustomField}
-                                        className="mt-3 text-darji-accent font-bold hover:underline"
-                                    >
-                                        Start from scratch
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        /* Text Mode Fallback */
-                        <textarea
-                            value={measurements}
-                            onChange={(e) => setMeasurements(e.target.value)}
-                            className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-darji-accent text-gray-800 font-medium resize-none font-mono text-sm leading-relaxed bg-gray-50 focus:bg-white"
-                            placeholder="Enter measurements here...&#10;&#10;Key: Value format recommeded"
-                            rows="10"
-                        />
-                    )}
-
-                    {/* Auto-suggest Indicator */}
-                    {selectedClient && measurements && (
-                        <p className="text-sm text-green-600 mt-4 flex items-center gap-2 font-medium bg-green-50 p-2 rounded-lg inline-flex border border-green-100">
-                            <FiClock size={14} />
-                            Last measurements loaded
-                        </p>
-                    )}
                 </div>
 
-                {/* Save Template Modal */}
-                {showSaveTemplate && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-                        <div className="bg-white rounded-2xl p-6 md:p-8 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300">
-                            <h3 className="text-2xl font-black text-gray-900 mb-2">Save Measurement Template</h3>
-                            <p className="text-gray-500 mb-6">Save these measurements for quick reuse</p>
 
-                            <input
-                                type="text"
-                                value={templateName}
-                                onChange={(e) => setTemplateName(e.target.value)}
-                                placeholder="Template name (e.g., John's Shirt, Wedding Suit)"
-                                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-darji-accent font-medium mb-6"
-                                autoFocus
-                            />
 
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={() => {
-                                        setShowSaveTemplate(false);
-                                        setTemplateName('');
-                                    }}
-                                    className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-bold transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={saveAsTemplate}
-                                    className="flex-1 px-6 py-3 bg-darji-accent text-white rounded-xl hover:bg-blue-600 font-bold transition-all shadow-md hover:shadow-lg active:scale-95"
-                                >
-                                    Save Template
-                                </button>
+                {/* Load Template Modal */}
+                {showLoadModal && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl max-h-[80vh] overflow-y-auto">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                                <FiDownload className="text-darji-accent" />
+                                Load Measurements
+                            </h3>
+
+                            <div className="relative mb-6">
+                                <FiSearch className="absolute left-3 top-3.5 text-slate-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Search by client name, phone, or template..."
+                                    value={searchQuery}
+                                    onChange={handleSearchMeasurements}
+                                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-darji-accent shadow-sm"
+                                    autoFocus
+                                />
                             </div>
-                        </div>
-                    </div>
-                )}
 
-                <div className="flex gap-4 pt-4 sticky bottom-4 z-50 md:static">
-                    <button
-                        type="button"
-                        onClick={() => navigate('/orders')}
-                        className="flex-1 md:flex-none px-8 py-4 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 font-bold transition-colors shadow-sm"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="flex-1 px-8 py-4 bg-gradient-to-r from-darji-primary to-darji-accent text-white rounded-xl hover:shadow-lg hover:-translate-y-0.5 active:scale-95 transition-all font-bold shadow-md flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                    >
-                        <FiSend />
-                        <span>{loading ? 'Processing...' : 'Create Order & Invoice'}</span>
-                    </button>
-                </div>
-                {/* New Standard Outfit Modal */}
-                {showNewStandardModal && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-                        <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl animate-in slide-in-from-bottom-4 duration-300 max-h-[90vh] flex flex-col">
-                            <div className="p-6 md:p-8 flex-1 overflow-y-auto">
-                                <h3 className="text-2xl font-black text-gray-900 mb-2">Add New Outfit Type</h3>
-                                <p className="text-gray-500 mb-6">Create a reusable measurement template (e.g. Sherwani, Kurta)</p>
-
-                                <div className="space-y-6">
+                            <div className="space-y-6">
+                                {/* Matched Clients */}
+                                {searchResults.clients.length > 0 && (
                                     <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Outfit Name</label>
-                                        <input
-                                            type="text"
-                                            value={newStandardName}
-                                            onChange={(e) => setNewStandardName(e.target.value)}
-                                            placeholder="e.g. Sherwani"
-                                            className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-darji-accent font-medium text-lg"
-                                            autoFocus
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Measurement Fields</label>
-                                        <div className="space-y-3">
-                                            {newStandardFields.map((field, index) => (
-                                                <div key={index} className="flex gap-2">
-                                                    <div className="flex-1 bg-gray-50 rounded-xl border border-gray-200 px-3 py-2 flex items-center">
-                                                        <span className="text-gray-400 font-bold mr-3 text-xs">{index + 1}.</span>
-                                                        <input
-                                                            type="text"
-                                                            value={field.label}
-                                                            onChange={(e) => {
-                                                                const newFields = [...newStandardFields];
-                                                                newFields[index].label = e.target.value;
-                                                                setNewStandardFields(newFields);
-                                                            }}
-                                                            placeholder="Field Name (e.g. Collar)"
-                                                            className="bg-transparent w-full outline-none font-medium text-gray-900 placeholder-gray-400"
-                                                        />
+                                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Matching Clients</h4>
+                                        <div className="space-y-2">
+                                            {searchResults.clients.map(client => (
+                                                <button
+                                                    key={client.id || client._id}
+                                                    type="button"
+                                                    onClick={() => handleLoadClientMeasurements(client.id || client._id)}
+                                                    className="w-full text-left p-3 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-100 hover:border-darji-accent/30 transition-all group flex justify-between items-center"
+                                                >
+                                                    <div>
+                                                        <div className="font-bold text-slate-800">{client.name}</div>
+                                                        <div className="text-xs text-slate-500">{client.phone}</div>
                                                     </div>
+                                                    <span className="text-xs font-bold text-darji-accent opacity-0 group-hover:opacity-100 transition-opacity">Load Last Order +</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Matched Templates */}
+                                {searchResults.templates.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Saved Templates</h4>
+                                        <div className="space-y-2">
+                                            {searchResults.templates.map(template => (
+                                                <div key={template.id || template._id} className="flex gap-2">
                                                     <button
                                                         type="button"
-                                                        onClick={() => {
-                                                            if (newStandardFields.length > 1) {
-                                                                const newFields = newStandardFields.filter((_, i) => i !== index);
-                                                                setNewStandardFields(newFields);
-                                                            }
-                                                        }}
-                                                        className="p-3 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                                                        disabled={newStandardFields.length === 1}
+                                                        onClick={() => { loadTemplate(template.id || template._id); setShowLoadModal(false); }}
+                                                        className="flex-1 text-left p-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 transition-all flex justify-between items-center"
+                                                    >
+                                                        <span className="font-bold text-indigo-900">{template.name}</span>
+                                                        <span className="text-xs font-bold text-indigo-600">Load +</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => handleDeleteGlobalTemplate(e, template.id || template._id)}
+                                                        className="p-3 text-slate-400 hover:text-rose-500 bg-slate-50 hover:bg-rose-50 rounded-lg border border-slate-100 transition-colors"
                                                     >
                                                         <FiTrash2 />
                                                     </button>
                                                 </div>
                                             ))}
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setNewStandardFields([...newStandardFields, { label: '', value: '' }])}
-                                            className="mt-3 w-full py-3 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-blue-50/30 transition-all flex items-center justify-center gap-2 text-sm"
-                                        >
-                                            <FiPlus /> Add Another Field
-                                        </button>
                                     </div>
-                                </div>
+                                )}
+
+                                {searchQuery && searchResults.clients.length === 0 && searchResults.templates.length === 0 && (
+                                    <div className="text-center py-8 text-slate-400">
+                                        <FiSearch className="mx-auto mb-2 text-2xl opacity-50" />
+                                        <p>No matching clients or templates found.</p>
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="p-6 md:p-8 pt-0 flex gap-3 bg-white rounded-b-2xl">
+                            <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end">
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        setShowNewStandardModal(false);
-                                        setNewStandardName('');
-                                        setNewStandardFields([{ label: '', value: '' }]);
-                                    }}
-                                    className="flex-1 px-6 py-3.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-bold transition-colors"
+                                    onClick={() => setShowLoadModal(false)}
+                                    className="px-6 py-2 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200"
                                 >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={saveGlobalStandard}
-                                    className="flex-1 px-6 py-3.5 bg-darji-accent text-white rounded-xl hover:bg-blue-600 font-bold transition-all shadow-md"
-                                >
-                                    Save Outfit
+                                    Close
                                 </button>
                             </div>
                         </div>
                     </div>
                 )}
+
+                {/* Save Template Modal */}
+                {showSaveTemplate && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+                            <h3 className="font-bold text-lg mb-4">Save Measurement Template</h3>
+                            <input
+                                type="text"
+                                placeholder="Template Name (e.g. John's Suit)"
+                                value={templateName}
+                                onChange={(e) => setTemplateName(e.target.value)}
+                                className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:ring-2 focus:ring-darji-accent"
+                                autoFocus
+                            />
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={saveAsTemplate}
+                                    className="flex-1 bg-darji-accent text-white py-3 rounded-xl font-bold"
+                                >
+                                    Save
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSaveTemplate(false)}
+                                    className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* New Standard Modal */}
+                {showNewStandardModal && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[80vh] overflow-y-auto">
+                            <h3 className="font-bold text-lg mb-4">Create New Standard Outfit</h3>
+                            <input
+                                type="text"
+                                placeholder="Outfit Name (e.g. Sherwani)"
+                                value={newStandardName}
+                                onChange={(e) => setNewStandardName(e.target.value)}
+                                className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:ring-2 focus:ring-darji-accent"
+                            />
+
+                            <div className="space-y-2 mb-4">
+                                <label className="text-xs font-bold text-gray-500 uppercase">Default Fields</label>
+                                {newStandardFields.map((field, idx) => (
+                                    <div key={idx} className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="Label (e.g. Length)"
+                                            value={field.label}
+                                            onChange={(e) => {
+                                                const newF = [...newStandardFields];
+                                                newF[idx].label = e.target.value;
+                                                setNewStandardFields(newF);
+                                            }}
+                                            className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                                        />
+                                        {newStandardFields.length > 1 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setNewStandardFields(newStandardFields.filter((_, i) => i !== idx))}
+                                                className="text-red-500 p-2"
+                                            >
+                                                <FiTrash2 />
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => setNewStandardFields([...newStandardFields, { label: '', value: '' }])}
+                                    className="text-sm font-bold text-darji-accent hover:underline flex items-center"
+                                >
+                                    <FiPlus className="mr-1" /> Add Field
+                                </button>
+                            </div>
+
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={saveGlobalStandard}
+                                    className="flex-1 bg-darji-accent text-white py-3 rounded-xl font-bold"
+                                >
+                                    Save Standard
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowNewStandardModal(false)}
+                                    className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Manage Standards Modal */}
+                {showManageStandardsModal && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                                <FiSettings className="text-slate-500" />
+                                Manage Standards
+                            </h3>
+                            <div className="space-y-3 max-h-[60vh] overflow-y-auto mb-4 pr-2">
+
+
+
+
+
+
+
+                                {standardOutfits.map((std, idx) => (
+                                    <div key={idx} className="flex items-center gap-3 p-3 bg-white hover:bg-slate-50 transition-all duration-200 rounded-xl border border-slate-100 hover:border-slate-200 shadow-sm hover:shadow-md group">
+                                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg flex-shrink-0">
+                                            <FiPackage size={18} />
+                                        </div>
+                                        <input
+                                            ref={el => standardInputRefs.current[idx] = el}
+                                            type="text"
+                                            value={std.name}
+                                            onChange={(e) => handleRenameStandard(idx, e.target.value)}
+                                            className="flex-1 bg-transparent border-none focus:ring-0 text-slate-800 font-semibold placeholder-slate-400 text-sm"
+                                        />
+                                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => standardInputRefs.current[idx]?.focus()}
+                                                className="p-1.5 text-slate-400 hover:text-darji-accent hover:bg-slate-200 rounded-md transition-colors"
+                                                title="Rename"
+                                            >
+                                                <FiEdit2 size={12} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteStandard(idx)}
+                                                className="p-1.5 text-rose-500 hover:bg-rose-100 rounded-md transition-colors"
+                                                title="Delete"
+                                            >
+                                                <FiTrash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
+                                <button
+                                    type="button"
+                                    onClick={handleRestoreDefaults}
+                                    className="text-xs font-bold text-slate-400 hover:text-darji-accent flex items-center gap-1"
+                                >
+                                    <FiRotateCcw /> Restore Defaults
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowManageStandardsModal(false)}
+                                    className="px-6 py-2 bg-darji-accent text-white font-bold rounded-xl shadow-lg shadow-indigo-200 hover:bg-indigo-700"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Special Requirements */}
+                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
+                    <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+                        <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
+                        Special Requirements & Designs
+                    </h2>
+
+                    <div className="space-y-6">
+                        {specialRequirements.map((req, index) => (
+                            <div key={index} className="bg-slate-50 p-4 rounded-xl border border-slate-200 relative group transition-all hover:border-slate-300">
+                                <button
+                                    type="button"
+                                    onClick={() => handleRemoveRequirement(index)}
+                                    className="absolute -top-2 -right-2 p-1.5 bg-white text-rose-500 shadow-md rounded-full border border-slate-100 opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-50 hover:scale-110"
+                                >
+                                    <FiTrash2 size={16} />
+                                </button>
+                                <div className="space-y-4">
+                                    <textarea
+                                        value={req.note}
+                                        onChange={(e) => handleRequirementChange(index, 'note', e.target.value)}
+                                        placeholder="Add note (e.g. 'Gold buttons', 'Double stitch')"
+                                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-darji-accent placeholder-slate-400 font-medium text-slate-700 shadow-sm"
+                                        rows="2"
+                                    />
+
+                                    <div className="flex flex-col gap-3">
+                                        <label className={`
+                                            flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-all shadow-sm w-fit
+                                            ${req.images && req.images.length > 0
+                                                ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'}
+                                        `}>
+                                            <FiImage className={req.images && req.images.length > 0 ? 'text-emerald-500' : 'text-slate-400'} />
+                                            <span className="text-xs font-bold uppercase tracking-wide">
+                                                {req.images && req.images.length > 0 ? `${req.images.length} Images Attached` : 'Attach Designs'}
+                                            </span>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                multiple
+                                                onChange={(e) => handleRequirementImageChange(index, e.target.files)}
+                                                className="hidden"
+                                            />
+                                        </label>
+
+                                        {req.images && req.images.length > 0 && (
+                                            <div className="flex flex-wrap gap-2">
+                                                {req.images.map((img, i) => (
+                                                    <div key={i} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm">
+                                                        <div className="w-8 h-8 rounded bg-slate-100 overflow-hidden flex items-center justify-center">
+                                                            <FiImage className="text-slate-400" />
+                                                        </div>
+                                                        <span className="text-xs text-slate-600 font-bold truncate max-w-[100px]">
+                                                            {img.name}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Legacy/Single Image Fallback Display */}
+                                        {!req.images && req.image && (
+                                            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm w-fit">
+                                                <div className="w-8 h-8 rounded bg-slate-100 overflow-hidden flex items-center justify-center">
+                                                    <FiImage className="text-slate-400" />
+                                                </div>
+                                                <span className="text-xs text-slate-600 font-bold truncate max-w-[150px]">
+                                                    {req.image.name}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+
+                        <button
+                            type="button"
+                            onClick={handleAddRequirement}
+                            className="w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-slate-400 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-slate-50 transition-all flex items-center justify-center gap-2 group"
+                        >
+                            <div className="p-1 bg-slate-100 rounded-full group-hover:bg-indigo-50 transition-colors">
+                                <FiPlus />
+                            </div>
+                            Add Requirement / Design
+                        </button>
+                    </div>
+                </div>
+
+                {/* Additional Services & Dates/Payment Container */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Additional Services */}
+                    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
+                        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center">
+                            <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
+                            Additional Services
+                        </h2>
+                        <div className="space-y-4">
+                            {additionalServiceItems.map((service, index) => (
+                                <div key={index} className="bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm relative group">
+                                    <button type="button" onClick={() => handleRemoveService(index)} className="absolute -top-2 -right-2 p-1.5 bg-white text-rose-500 shadow-sm rounded-full border border-slate-100 opacity-0 group-hover:opacity-100 hover:bg-rose-50 transition-all"><FiTrash2 size={16} /></button>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Description</label>
+                                            <input type="text" value={service.description} onChange={(e) => handleServiceChange(index, 'description', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-medium text-slate-800 text-sm" placeholder="e.g. Lining Fabric" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Amount (₹)</label>
+                                                <input type="number" value={service.amount} onChange={(e) => handleServiceChange(index, 'amount', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent font-bold text-slate-800 text-sm" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cost (₹)</label>
+                                                <input type="number" value={service.cost} onChange={(e) => handleServiceChange(index, 'cost', e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-darji-accent text-sm text-slate-500" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                            <button
+                                type="button"
+                                onClick={handleAddService}
+                                className="mt-2 w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold hover:border-darji-accent hover:text-darji-accent hover:bg-slate-50 transition-all flex items-center justify-center gap-2 text-sm"
+                            >
+                                <FiPlus /> Add Service
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Dates & Payment */}
+                    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 flex flex-col justify-between">
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center">
+                                <span className="w-1.5 h-6 bg-darji-accent rounded-full mr-3"></span>
+                                Dates & Payment
+                            </h2>
+
+                            <div className="grid grid-cols-2 gap-4 mb-6">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Trial Date</label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400"><FiCalendar /></div>
+                                        <input type="date" value={trialDate} onChange={(e) => setTrialDate(e.target.value)} className="w-full pl-10 pr-2 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-darji-accent text-sm font-medium text-slate-700" />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Delivery Date</label>
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400"><FiCalendar /></div>
+                                        <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="w-full pl-10 pr-2 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-darji-accent text-sm font-medium text-slate-700" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 p-4 sm:p-6 rounded-2xl text-white shadow-lg shadow-slate-900/20 relative overflow-hidden">
+                            {/* Abstract Decoration */}
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
+
+                            <div className="flex justify-between items-center mb-3 pb-3 border-b border-white/10 relative z-10">
+                                <span className="font-medium text-slate-300 text-sm">Total Amount</span>
+                                <span className="text-xl sm:text-3xl font-bold text-white tracking-tight whitespace-nowrap">₹{(items.reduce((acc, i) => acc + (i.price * i.quantity), 0) + additionalServiceItems.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0)).toLocaleString('en-IN')}</span>
+                            </div>
+
+                            <div className="mb-3 relative z-10">
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Advance Payment</label>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 font-bold">₹</div>
+                                    <input
+                                        type="number"
+                                        value={advance}
+                                        onChange={(e) => setAdvance(e.target.value)}
+                                        className="w-full pl-8 pr-4 py-2.5 sm:py-3 bg-white/10 border border-white/10 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white/20 font-bold text-lg sm:text-xl text-white placeholder-white/30 transition-all"
+                                        placeholder="0"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-between items-center relative z-10">
+                                <span className="font-bold text-slate-300 text-xs sm:text-sm">Balance Due</span>
+                                <span className="text-lg sm:text-xl font-bold text-emerald-400 whitespace-nowrap">
+                                    ₹{((items.reduce((acc, i) => acc + (i.price * i.quantity), 0) + additionalServiceItems.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0)) - (parseFloat(advance) || 0)).toLocaleString('en-IN')}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Submit Button */}
+                <div className="sticky bottom-4 z-40 bg-white/80 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-white/50 animate-in fade-in slide-in-from-bottom-8 duration-700 flex justify-end items-center gap-4">
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className={`
+                            flex-1 md:flex-none md:w-auto px-8 py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg shadow-slate-900/20 
+                            hover:bg-indigo-600 hover:shadow-indigo-600/30 hover:-translate-y-1 transition-all active:scale-95 flex items-center justify-center gap-3
+                            ${loading ? 'opacity-75 cursor-not-allowed' : ''}
+                        `}
+                    >
+                        {loading ? (
+                            <>
+                                <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                Creating...
+                            </>
+                        ) : (
+                            <>
+                                <FiCheckCircle size={20} />
+                                Confirm Order & Generate Invoice
+                            </>
+                        )}
+                    </button>
+                </div>
             </form>
         </div>
     );

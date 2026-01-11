@@ -1,0 +1,45 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "D:\\The Darji\\TECH\\logs\\.74ff525acc5baaf320d1ff3967401f7740320512-audit.json",
+    "files": [
+        {
+            "date": 1767448973088,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-03.log",
+            "hash": "0d58c01e9cf1999bf3b8971e232ae56ccc38da22890dc890849e33774bd7e1c4"
+        },
+        {
+            "date": 1767465098604,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-04.log",
+            "hash": "084de8b1a083860eed46da7a97f80cae0518a6d5e8719133c317a8904d3f874d"
+        },
+        {
+            "date": 1767551406388,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-05.log",
+            "hash": "d83fb60c2cc920e446056e25e535dfee2378c70fb1afc61504c5bd9d131f6866"
+        },
+        {
+            "date": 1767694898163,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-06.log",
+            "hash": "50a4a63f84dc6db17786d43a08f5394f6efd45e630be5aa0bb9004070bf73782"
+        },
+        {
+            "date": 1767759530472,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-07.log",
+            "hash": "d6d07b686f3e130c919d0bab95c3bdce5ecb8756aee81acef639cb9b58129589"
+        },
+        {
+            "date": 1768061289844,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-10.log",
+            "hash": "9629d9904a021851b49c1fbf06ddb873aea598eeb028915c545dad6c63caef75"
+        },
+        {
+            "date": 1768069835978,
+            "name": "D:\\The Darji\\TECH\\logs\\combined-2026-01-11.log",
+            "hash": "81ac10ac50956f9d6ce2f627f55d3b93570cdf7187d6a45e69c2327514ecfcbd"
+        }
+    ],
+    "hashType": "sha256"
+}

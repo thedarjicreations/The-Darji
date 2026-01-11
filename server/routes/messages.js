@@ -1,74 +1,94 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import Message from '../models/Message.js';
 import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import logger from '../config/logger.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
-// Get all messages
-router.get('/', authenticate, async (req, res) => {
-    try {
-        const { type, clientId } = req.query;
+// All routes require authentication
+router.use(authenticate);
 
-        const where = {};
-        if (type) where.type = type;
-        if (clientId) where.clientId = clientId;
+/**
+ * @route   GET /api/messages
+ * @desc    Get all messages with filters
+ * @access  Private
+ */
+router.get('/', asyncHandler(async (req, res) => {
+    const { status, type, clientId } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
 
-        const messages = await prisma.message.findMany({
-            where,
-            include: {
-                client: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+    let query = {};
+    if (status) query.status = status;
+    if (type) query.type = type;
+    if (clientId) query.client = clientId;
 
-        res.json(messages);
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-        res.status(500).json({ error: 'Failed to fetch messages' });
+    const messages = await Message.find(query)
+        .populate('client', 'name phone')
+        .populate('order', 'orderNumber')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit);
+
+    const total = await Message.countDocuments(query);
+
+    res.json({
+        messages,
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+}));
+
+/**
+ * @route   GET /api/messages/client/:clientId
+ * @desc    Get message history for a client
+ * @access  Private
+ */
+router.get('/client/:clientId', asyncHandler(async (req, res) => {
+    const messages = await Message.find({ client: req.params.clientId })
+        .populate('order', 'orderNumber')
+        .sort({ createdAt: -1 });
+
+    res.json(messages);
+}));
+
+/**
+ * @route   POST /api/messages
+ * @desc    Create and optionally send message
+ * @access  Private
+ */
+router.post('/', asyncHandler(async (req, res) => {
+    const message = await Message.create({
+        ...req.body,
+        sentBy: req.userId,
+    });
+
+    await message.populate('client', 'name phone');
+
+
+
+    res.status(201).json(message);
+}));
+
+/**
+ * @route   PATCH /api/messages/:id/status
+ * @desc    Update message status
+ * @access  Private
+ */
+router.patch('/:id/status', asyncHandler(async (req, res) => {
+    const { status, metadata } = req.body;
+
+    const message = await Message.findByIdAndUpdate(
+        req.params.id,
+        { status, metadata },
+        { new: true }
+    ).populate('client', 'name phone');
+
+    if (!message) {
+        return res.status(404).json({ error: 'Message not found' });
     }
-});
 
-// Manually trigger re-engagement message
-router.post('/re-engage/:clientId', authenticate, async (req, res) => {
-    try {
-        const { clientId } = req.params;
-
-        const { sendReEngagementMessage } = await import('../services/messagingService.js');
-        await sendReEngagementMessage(clientId);
-
-        res.json({ message: 'Re-engagement message sent successfully' });
-    } catch (error) {
-        console.error('Error sending re-engagement message:', error);
-        res.status(500).json({ error: 'Failed to send re-engagement message' });
-    }
-});
-
-// Trigger post-delivery message for an order
-router.post('/post-delivery/:orderId', authenticate, async (req, res) => {
-    try {
-        const { orderId } = req.params;
-
-        // Get order with client details
-        const order = await prisma.order.findUnique({
-            where: { id: orderId },
-            include: {
-                client: true
-            }
-        });
-
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-
-        const { sendPostDeliveryMessage } = await import('../services/messagingService.js');
-        const { whatsappLink } = await sendPostDeliveryMessage(order);
-
-        res.json({ whatsappLink, message: 'Post-delivery message ready to send' });
-    } catch (error) {
-        console.error('Error generating post-delivery message:', error);
-        res.status(500).json({ error: 'Failed to generate post-delivery message' });
-    }
-});
+    res.json(message);
+}));
 
 export default router;

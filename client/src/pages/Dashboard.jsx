@@ -1,481 +1,357 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/client';
-import { FiShoppingCart, FiDollarSign, FiUsers, FiBell, FiAlertTriangle, FiClock, FiX, FiChevronRight, FiCalendar } from 'react-icons/fi';
+import {
+    FiBarChart2, FiBox, FiClipboard, FiClock,
+    FiSearch, FiMenu, FiX, FiCheckCircle,
+    FiTrendingUp, FiCalendar, FiPlus,
+    FiCreditCard, FiUsers, FiBell, FiShoppingCart,
+    FiShoppingBag, FiScissors, FiFilter,
+    FiChevronRight, FiChevronDown, FiArrowRight
+} from 'react-icons/fi';
 import { Link } from 'react-router-dom';
+import { AreaChart, Area, ResponsiveContainer, Tooltip } from 'recharts';
 
 export default function Dashboard() {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [reminders, setReminders] = useState(null);
-    const [showReminders, setShowReminders] = useState(true);
-    const [notificationPermission, setNotificationPermission] = useState(
-        typeof Notification !== 'undefined' ? Notification.permission : 'denied'
-    );
+    const [greeting, setGreeting] = useState('');
 
     useEffect(() => {
-        fetchStats();
-        fetchReminders();
-        requestNotificationPermission();
+        fetchDashboardData();
+        updateGreeting();
     }, []);
 
-    const fetchStats = async () => {
+    const updateGreeting = () => {
+        const hour = new Date().getHours();
+        if (hour < 12) setGreeting('Good Morning');
+        else if (hour < 18) setGreeting('Good Afternoon');
+        else setGreeting('Good Evening');
+    };
+
+    const fetchDashboardData = async () => {
         try {
-            const response = await api.get('/analytics/overview');
-            setStats(response.data);
+            const [overviewResponse, ordersResponse, profitResponse] = await Promise.all([
+                api.get('/analytics/overview'),
+                api.get('/orders', { params: { limit: 100 } }),
+                api.get('/analytics/profit')
+            ]);
+
+            const { totalOrders, totalClients, totalRevenue, pendingOrders, pendingOrderRevenue } = overviewResponse.data;
+            const allOrders = ordersResponse.data.orders || [];
+            const { profit, profitMargin, potentialProfit } = profitResponse.data;
+
+            // --- Stats Processing ---
+            setStats({
+                totalOrders,
+                totalRevenue,
+                profit: profit || 0,
+                potentialProfit: potentialProfit || 0,
+                profitMargin: profitMargin || 0,
+                totalClients,
+                pendingOrders,
+                pendingOrderRevenue: pendingOrderRevenue || 0,
+                recentOrders: allOrders.slice(0, 5)
+            });
+
+            // --- Reminders Processing ---
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            const nextWeek = new Date(today);
+            nextWeek.setDate(today.getDate() + 7);
+
+            const overdueTrials = [];
+            const todaysTrials = [];
+            const upcomingTrials = []; // New
+            const pendingPayments = [];
+
+            allOrders.forEach(order => {
+                const trialDate = order.trialDate ? new Date(order.trialDate) : null;
+
+                // Reset time for accurate date comparison
+                if (trialDate) trialDate.setHours(0, 0, 0, 0);
+
+                // Overdue
+                if (trialDate && trialDate < today && !['Ready for Trial', 'Delivered', 'Completed'].includes(order.status)) {
+                    const daysOverdue = Math.floor((today - trialDate) / (1000 * 60 * 60 * 24));
+                    overdueTrials.push({ ...order, daysOverdue });
+                }
+
+                // Today
+                if (trialDate && trialDate.getTime() === today.getTime() && !['Completed', 'Delivered'].includes(order.status)) {
+                    todaysTrials.push(order);
+                }
+
+                // Upcoming (Tomorrow to Next Week)
+                if (trialDate && trialDate > today && trialDate <= nextWeek && !['Completed', 'Delivered'].includes(order.status)) {
+                    upcomingTrials.push(order);
+                }
+
+                // Payments
+                const outstanding = (parseFloat(order.totalAmount) || 0) - (parseFloat(order.advance) || 0);
+                if (outstanding > 0 && !['Delivered', 'Cancelled'].includes(order.status)) {
+                    pendingPayments.push({ ...order, outstandingAmount: outstanding });
+                }
+            });
+
+            setReminders({
+                overdueTrials,
+                todaysTrials,
+                upcomingTrials,
+                pendingPayments
+            });
         } catch (error) {
-            console.error('Error fetching stats:', error);
+            console.error('Error fetching dashboard data:', error);
         } finally {
             setLoading(false);
         }
     };
 
-    const fetchReminders = async () => {
-        try {
-            const [overdueRes, inactiveRes, todayRes] = await Promise.all([
-                api.get('/analytics/overdue-reminders'),
-                api.get('/analytics/inactive-clients?days=30'),
-                api.get('/analytics/todays-reminders')
-            ]);
+    // Mock data for sparkline
+    const sparklineData = [{ value: 400 }, { value: 300 }, { value: 500 }, { value: 280 }, { value: 590 }, { value: 320 }, { value: 450 }];
 
-            const reminderData = {
-                ...overdueRes.data,
-                inactiveClients: inactiveRes.data,
-                ...todayRes.data
-            };
-
-            setReminders(reminderData);
-
-            // Show browser notifications for today's items
-            if (notificationPermission === 'granted') {
-                showBrowserNotifications(todayRes.data);
-            }
-        } catch (error) {
-            console.error('Error fetching reminders:', error);
-        }
-    };
-
-    const requestNotificationPermission = async () => {
-        if (typeof Notification === 'undefined') return;
-
-        if (Notification.permission === 'default') {
-            const permission = await Notification.requestPermission();
-            setNotificationPermission(permission);
-        }
-    };
-
-    const showBrowserNotifications = (todayData) => {
-        const { todaysTrials, todaysDeliveries } = todayData;
-
-        if (todaysTrials && todaysTrials.length > 0) {
-            new Notification('📋 Trial Reminder - The Darji', {
-                body: `You have ${todaysTrials.length} trial${todaysTrials.length > 1 ? 's' : ''} scheduled for today`,
-                icon: '/logo.png',
-                badge: '/logo.png',
-                tag: 'todays-trials'
-            });
-        }
-
-        if (todaysDeliveries && todaysDeliveries.length > 0) {
-            new Notification('🚚 Delivery Reminder - The Darji', {
-                body: `You have ${todaysDeliveries.length} deliver${todaysDeliveries.length > 1 ? 'ies' : 'y'} scheduled for today`,
-                icon: '/logo.png',
-                badge: '/logo.png',
-                tag: 'todays-deliveries'
-            });
-        }
-    };
-
-    if (loading) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[60vh]">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-darji-accent mb-4"></div>
-                <p className="text-gray-500 font-medium">Loading dashboard...</p>
-            </div>
-        );
-    }
-
-    const statCards = [
-        { label: 'Total Orders', value: stats?.totalOrders || 0, icon: FiShoppingCart, color: 'bg-blue-500' },
-        { label: 'Total Revenue', value: `₹${stats?.totalRevenue?.toFixed(2) || 0}`, icon: FiDollarSign, color: 'bg-green-500' },
-        { label: 'Profit/Loss', value: `₹${stats?.profit?.toFixed(2) || 0}`, icon: FiDollarSign, color: stats?.profit >= 0 ? 'bg-green-600' : 'bg-red-500' },
-        { label: 'Total Clients', value: stats?.totalClients || 0, icon: FiUsers, color: 'bg-purple-500' },
-        { label: 'Pending Orders', value: stats?.pendingOrders || 0, icon: FiBell, color: 'bg-orange-500' },
-    ];
+    if (loading) return <div className="flex justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-darji-accent border-t-transparent rounded-full" /></div>;
 
     return (
-        <div className="fade-in max-w-7xl mx-auto space-y-8 pb-20 md:pb-0 px-4 md:px-0">
-            {/* Header Section */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-2">
+        <div className="w-full max-w-full mx-auto pb-6 md:pb-0 overflow-x-hidden px-3 md:px-0 space-y-8 animate-fade-in">
+            {/* Hero Section */}
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
                 <div>
-                    <h1 className="text-3xl md:text-4xl font-black text-gray-900 tracking-tight">
-                        Dashboard
+                    <p className="text-slate-500 font-medium tracking-wide text-xs mb-2 uppercase">
+                        {new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    </p>
+                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
+                        {greeting}, <span className="text-darji-accent">Kartik</span>
                     </h1>
-                    <p className="text-gray-500 mt-2 font-medium">Overview of your tailoring business</p>
                 </div>
-                <div className="hidden md:block text-right">
-                    <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">{new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                <div className="flex gap-3">
+                    <Link to="/orders" className="btn-secondary shadow-sm">View Orders</Link>
+                    <Link to="/new-order" className="btn-primary flex items-center gap-2 shadow-lg shadow-darji-primary/20">
+                        <span className="text-lg">+</span> New Order
+                    </Link>
                 </div>
             </div>
 
-            {/* Stats Grid - Premium Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                {statCards.map((stat, index) => {
-                    const Icon = stat.icon;
-                    // Extract color base (e.g., 'blue' from 'bg-blue-500') roughly or use distinct styles
-                    const colorClass = stat.color.replace('bg-', 'text-').replace('-500', '-600').replace('-600', '-600');
-                    const bgClass = stat.color.replace('bg-', 'bg-').replace('-500', '-50').replace('-600', '-50');
-
-                    return (
-                        <div key={index} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-300 hover:-translate-y-1 group">
-                            <div className="flex items-start justify-between">
-                                <div>
-                                    <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">{stat.label}</p>
-                                    <h3 className="text-2xl md:text-3xl font-black text-gray-800 tracking-tight group-hover:text-darji-accent transition-colors">
-                                        {stat.value}
-                                    </h3>
-                                </div>
-                                <div className={`p-3 rounded-xl ${bgClass} ${colorClass} group-hover:scale-110 transition-transform duration-300`}>
-                                    <Icon size={24} />
-                                </div>
-                            </div>
-                            {/* Decorative bottom line */}
-                            <div className={`mt-4 h-1 w-full rounded-full ${bgClass} overflow-hidden`}>
-                                <div className={`h-full w-1/3 ${stat.color} rounded-full`}></div>
-                            </div>
+            {/* Stats Grid - Modern Slate */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+                {/* Revenue Card */}
+                <div className="card-premium p-4 sm:p-6 relative overflow-hidden group">
+                    <div className="flex justify-between items-start mb-4">
+                        <div>
+                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Total Revenue</p>
+                            <h3 className="text-lg sm:text-3xl font-bold text-slate-900 mt-1 whitespace-nowrap overflow-hidden text-ellipsis">₹{stats?.totalRevenue?.toLocaleString('en-IN')}</h3>
                         </div>
-                    );
-                })}
-            </div>
-
-            {/* Smart Reminders Section */}
-            {reminders && (
-                <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden transform transition-all duration-300">
-                    <div className="bg-gradient-to-r from-darji-primary to-darji-accent p-5 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-inner">
-                                <FiBell className="text-white" size={20} />
-                            </div>
-                            <div>
-                                <h2 className="text-xl font-black text-white tracking-tight">Smart Reminders</h2>
-                                <p className="text-blue-100 text-sm font-medium">Alerts & Follow-ups</p>
-                            </div>
+                        <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors shrink-0 flex items-center justify-center h-8 w-8">
+                            <FiBarChart2 size={18} />
                         </div>
-                        <button
-                            onClick={() => setShowReminders(!showReminders)}
-                            className="p-2 hover:bg-white/20 rounded-lg transition-colors text-white active:scale-95"
-                        >
-                            <FiChevronRight size={20} className={`transition-transform duration-300 ${showReminders ? 'rotate-90' : ''}`} />
-                        </button>
                     </div>
-
-                    {showReminders && (
-                        <div className="p-6 space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
-                            {/* Overdue Trials */}
-                            {reminders.overdueTrials && reminders.overdueTrials.length > 0 && (
-                                <div className="bg-red-50 border border-red-100 p-4 rounded-xl shadow-sm">
-                                    <div className="flex items-start gap-4">
-                                        <div className="p-2 bg-red-100 rounded-lg text-red-600">
-                                            <FiAlertTriangle size={20} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <h3 className="font-black text-red-900 mb-3 flex items-center gap-2">
-                                                Overdue Trials
-                                                <span className="bg-red-200 text-red-800 text-xs px-2 py-0.5 rounded-full">{reminders.overdueTrials.length}</span>
-                                            </h3>
-                                            <div className="space-y-2">
-                                                {reminders.overdueTrials.slice(0, 3).map(order => (
-                                                    <Link
-                                                        key={order.id}
-                                                        to={`/orders/${order.id}`}
-                                                        className="flex items-center justify-between p-3 bg-white rounded-lg hover:shadow-md transition-all group border border-red-100/50"
-                                                    >
-                                                        <div>
-                                                            <p className="font-bold text-gray-900">{order.client.name}</p>
-                                                            <div className="flex items-center gap-2 text-xs">
-                                                                <span className="font-medium text-gray-500">#{order.orderNumber}</span>
-                                                                <span className="text-red-600 font-bold">• {order.daysOverdue} days overdue</span>
-                                                            </div>
-                                                        </div>
-                                                        <FiChevronRight className="text-gray-300 group-hover:text-red-500 transition-colors" />
-                                                    </Link>
-                                                ))}
-                                                {reminders.overdueTrials.length > 3 && (
-                                                    <p className="text-sm text-red-600 font-bold ml-1 hover:underline cursor-pointer">+{reminders.overdueTrials.length - 3} more overdue</p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Overdue Deliveries */}
-                            {reminders.overdueDeliveries && reminders.overdueDeliveries.length > 0 && (
-                                <div className="bg-red-50 border border-red-100 p-4 rounded-xl shadow-sm">
-                                    <div className="flex items-start gap-4">
-                                        <div className="p-2 bg-red-100 rounded-lg text-red-600">
-                                            <FiAlertTriangle size={20} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <h3 className="font-black text-red-900 mb-3 flex items-center gap-2">
-                                                Overdue Deliveries
-                                                <span className="bg-red-200 text-red-800 text-xs px-2 py-0.5 rounded-full">{reminders.overdueDeliveries.length}</span>
-                                            </h3>
-                                            <div className="space-y-2">
-                                                {reminders.overdueDeliveries.slice(0, 3).map(order => (
-                                                    <Link
-                                                        key={order.id}
-                                                        to={`/orders/${order.id}`}
-                                                        className="flex items-center justify-between p-3 bg-white rounded-lg hover:shadow-md transition-all group border border-red-100/50"
-                                                    >
-                                                        <div>
-                                                            <p className="font-bold text-gray-900">{order.client.name}</p>
-                                                            <div className="flex items-center gap-2 text-xs">
-                                                                <span className="font-medium text-gray-500">#{order.orderNumber}</span>
-                                                                <span className="text-red-600 font-bold">• {order.daysOverdue} days overdue</span>
-                                                            </div>
-                                                        </div>
-                                                        <FiChevronRight className="text-gray-300 group-hover:text-red-600 transition-colors" />
-                                                    </Link>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Pending Payments */}
-                            {reminders.pendingPayments && reminders.pendingPayments.length > 0 && (
-                                <div className="bg-orange-50 border border-orange-100 p-4 rounded-xl shadow-sm">
-                                    <div className="flex items-start gap-4">
-                                        <div className="p-2 bg-orange-100 rounded-lg text-orange-600">
-                                            <FiDollarSign size={20} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <h3 className="font-black text-orange-900 mb-3 flex items-center gap-2">
-                                                Pending Payments
-                                                <span className="bg-orange-200 text-orange-800 text-xs px-2 py-0.5 rounded-full">{reminders.pendingPayments.length}</span>
-                                            </h3>
-                                            <div className="space-y-2">
-                                                {reminders.pendingPayments.slice(0, 3).map(order => (
-                                                    <Link
-                                                        key={order.id}
-                                                        to={`/orders/${order.id}`}
-                                                        className="flex items-center justify-between p-3 bg-white rounded-lg hover:shadow-md transition-all group border border-orange-100/50"
-                                                    >
-                                                        <div>
-                                                            <p className="font-bold text-gray-900">{order.client.name}</p>
-                                                            <div className="flex items-center gap-2 text-xs">
-                                                                <span className="font-medium text-gray-500">#{order.orderNumber}</span>
-                                                                <span className="text-orange-600 font-bold">• ₹{order.outstandingAmount.toFixed(0)} due</span>
-                                                            </div>
-                                                        </div>
-                                                        <FiChevronRight className="text-gray-300 group-hover:text-orange-500 transition-colors" />
-                                                    </Link>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Inactive Clients */}
-                            {reminders.inactiveClients && reminders.inactiveClients.length > 0 && (
-                                <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl shadow-sm">
-                                    <div className="flex items-start gap-4">
-                                        <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
-                                            <FiUsers size={20} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <h3 className="font-black text-blue-900 mb-3 flex items-center gap-2">
-                                                Inactive Clients
-                                                <span className="bg-blue-200 text-blue-800 text-xs px-2 py-0.5 rounded-full">{reminders.inactiveClients.length}</span>
-                                            </h3>
-                                            <div className="space-y-2">
-                                                {reminders.inactiveClients.slice(0, 3).map(client => (
-                                                    <a
-                                                        key={client.clientId}
-                                                        href={`https://wa.me/${client.clientPhone.replace(/\D/g, '')}`}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="flex items-center justify-between p-3 bg-white rounded-lg hover:shadow-md transition-all group border border-blue-100/50"
-                                                    >
-                                                        <div>
-                                                            <p className="font-bold text-gray-900">{client.clientName}</p>
-                                                            <div className="flex items-center gap-2 text-xs">
-                                                                <span className="text-blue-600 font-bold">Last order {client.daysSince} days ago</span>
-                                                            </div>
-                                                        </div>
-                                                        <FiChevronRight className="text-gray-300 group-hover:text-blue-500 transition-colors" />
-                                                    </a>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Today's Schedule */}
-                            {((reminders.todaysTrials && reminders.todaysTrials.length > 0) ||
-                                (reminders.todaysDeliveries && reminders.todaysDeliveries.length > 0)) && (
-                                    <div className="bg-green-50 border border-green-100 p-4 rounded-xl shadow-sm">
-                                        <div className="flex items-start gap-4">
-                                            <div className="p-2 bg-green-100 rounded-lg text-green-600">
-                                                <FiClock size={20} />
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="font-black text-green-900 mb-3">Today's Schedule</h3>
-                                                <div className="space-y-2">
-                                                    {reminders.todaysTrials && reminders.todaysTrials.map(order => (
-                                                        <Link
-                                                            key={order.id}
-                                                            to={`/orders/${order.id}`}
-                                                            className="flex items-center justify-between p-3 bg-white rounded-lg hover:shadow-md transition-all group border border-green-100/50"
-                                                        >
-                                                            <div>
-                                                                <p className="font-bold text-gray-900">{order.client.name}</p>
-                                                                <div className="flex items-center gap-2 text-xs">
-                                                                    <span className="font-medium text-gray-500">#{order.orderNumber}</span>
-                                                                    <span className="text-green-600 font-bold">• Trial Today</span>
-                                                                </div>
-                                                            </div>
-                                                            <FiChevronRight className="text-gray-300 group-hover:text-green-500 transition-colors" />
-                                                        </Link>
-                                                    ))}
-                                                    {reminders.todaysDeliveries && reminders.todaysDeliveries.map(order => (
-                                                        <Link
-                                                            key={order.id}
-                                                            to={`/orders/${order.id}`}
-                                                            className="flex items-center justify-between p-3 bg-white rounded-lg hover:shadow-md transition-all group border border-green-100/50"
-                                                        >
-                                                            <div>
-                                                                <p className="font-bold text-gray-900">{order.client.name}</p>
-                                                                <div className="flex items-center gap-2 text-xs">
-                                                                    <span className="font-medium text-gray-500">#{order.orderNumber}</span>
-                                                                    <span className="text-green-600 font-bold">• Delivery Today</span>
-                                                                </div>
-                                                            </div>
-                                                            <FiChevronRight className="text-gray-300 group-hover:text-green-500 transition-colors" />
-                                                        </Link>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                            {/* No Reminders */}
-                            {!reminders.overdueTrials?.length &&
-                                !reminders.overdueDeliveries?.length &&
-                                !reminders.pendingPayments?.length &&
-                                !reminders.inactiveClients?.length &&
-                                !reminders.todaysTrials?.length &&
-                                !reminders.todaysDeliveries?.length && (
-                                    <div className="text-center py-8">
-                                        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                            <FiBell className="text-green-600" size={32} />
-                                        </div>
-                                        <p className="text-gray-600 font-medium">All caught up! No reminders at the moment.</p>
-                                    </div>
-                                )}
-                        </div>
-                    )}
+                    <div className="h-12 w-full mt-2 -ml-2">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={sparklineData}>
+                                <Area type="monotone" dataKey="value" stroke="#4f46e5" strokeWidth={2} fill="url(#colorRevenue)" fillOpacity={0.1} />
+                                <defs>
+                                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.2} />
+                                        <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    </div>
                 </div>
-            )}
 
-            {/* Main Content Grid */}
+                {/* Profit Card */}
+                <div className="card-premium p-4 sm:p-6 group">
+                    <div className="flex justify-between items-start mb-4">
+                        <div>
+                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Net Profit</p>
+                            <h3 className="text-lg sm:text-3xl font-bold text-slate-900 mt-1 whitespace-nowrap overflow-hidden text-ellipsis">₹{stats?.profit?.toLocaleString('en-IN')}</h3>
+                        </div>
+                        <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors shrink-0 flex items-center justify-center h-8 w-8">
+                            <FiTrendingUp size={18} />
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                        <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md">
+                            +{stats?.profitMargin}% Margin
+                        </span>
+                    </div>
+                </div>
+
+                {/* Orders Card */}
+                <div className="card-premium p-4 sm:p-6 group">
+                    <div className="flex justify-between items-start mb-4">
+                        <div>
+                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Active Orders</p>
+                            <h3 className="text-lg sm:text-3xl font-bold text-slate-900 mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{stats?.pendingOrders || 0}</h3>
+                        </div>
+                        <div className="p-2 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors shrink-0 flex items-center justify-center h-8 w-8">
+                            <FiShoppingBag size={18} />
+                        </div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2 font-medium">
+                        {stats?.pendingOrders > 0 ? 'Requires attention soon' : 'All orders on track'}
+                    </p>
+                </div>
+
+                {/* Pipeline Value */}
+                <div className="bg-slate-900 p-4 rounded-2xl shadow-sm border border-slate-800 relative overflow-hidden group text-white">
+                    <div className="absolute -bottom-6 -right-6 p-4 opacity-5 pointer-events-none">
+                        <FiUsers size={120} />
+                    </div>
+                    <div className="relative z-10">
+                        <div className="flex justify-between items-start mb-2">
+                            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider leading-tight pr-2">Uncollected Revenue</p>
+                            <div className="p-1.5 rounded-lg bg-slate-800 text-slate-400 shrink-0">
+                                <FiUsers size={14} />
+                            </div>
+                        </div>
+                        <h3 className="text-lg sm:text-xl font-black text-white mb-2 tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">
+                            ₹{stats?.pendingOrderRevenue?.toLocaleString('en-IN') || '0'}
+                        </h3>
+
+                        <div className="flex flex-col gap-2 w-full">
+                            <div className="bg-emerald-500/10 text-emerald-400 px-2 py-1.5 rounded-lg w-full border border-emerald-500/10">
+                                <div className="flex justify-between items-center w-full">
+                                    <span className="text-[9px] text-emerald-500/70 uppercase font-bold">Pot. Profit</span>
+                                    <span className="font-bold text-xs">₹{stats?.potentialProfit?.toLocaleString('en-IN') || 0}</span>
+                                </div>
+                            </div>
+                            <div className="text-slate-400/80 text-[10px] leading-tight">
+                                From pending orders
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-                {/* Left Column: Quick Actions & Navigation */}
-                <div className="lg:col-span-2 space-y-8">
-                    {/* Quick Actions */}
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                            <span className="w-1 h-6 bg-darji-accent rounded-full inline-block"></span>
-                            Quick Actions
-                        </h2>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                            <Link to="/new-order" className="flex flex-col items-center justify-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl hover:border-darji-accent hover:bg-blue-50/30 transition-all group shadow-sm hover:shadow-md">
-                                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                                    <span className="text-2xl font-bold">+</span>
-                                </div>
-                                <span className="font-bold text-gray-700 group-hover:text-blue-700">New Order</span>
+                {/* Left Column: Recent Activity - Modern Slate Card */}
+                <div className="lg:col-span-2">
+                    <div className="card-premium p-6 h-full">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-2">
+                            <h2 className="text-xl font-bold text-slate-800">Recent Activity</h2>
+                            <Link to="/orders" className="text-sm font-semibold text-darji-accent hover:text-darji-secondary flex items-center gap-1 transition-colors">
+                                View All <FiArrowRight />
                             </Link>
-                            <Link to="/clients" className="flex flex-col items-center justify-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl hover:border-purple-500 hover:bg-purple-50/30 transition-all group shadow-sm hover:shadow-md">
-                                <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                                    <FiUsers size={24} />
+                        </div>
+                        <div className="divide-y divide-slate-50">
+                            {stats?.recentOrders?.map(order => (
+                                <div key={order._id} className="py-5 flex items-center justify-between group hover:bg-slate-50/50 transition-colors -mx-2 px-2 rounded-lg">
+                                    <div className="flex items-center gap-4">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-sm ${order.status === 'Completed' ? 'bg-emerald-100 text-emerald-600' :
+                                            order.status === 'Pending' ? 'bg-amber-100 text-amber-600' :
+                                                'bg-slate-100 text-slate-400'
+                                            }`}>
+                                            {order.client?.name?.charAt(0)}
+                                        </div>
+                                        <div>
+                                            <p className="font-semibold text-slate-900 text-sm group-hover:text-darji-accent transition-colors">{order.client?.name}</p>
+                                            <p className="text-xs text-slate-500 font-medium">#{order.orderNumber}</p>
+                                        </div>
+                                    </div>
+                                    <div className="text-right flex items-center gap-6">
+                                        <p className="font-bold text-slate-800 text-sm">₹{order.totalAmount?.toLocaleString('en-IN')}</p>
+                                        <span className={`text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full border ${order.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                                            order.status === 'Pending' ? 'bg-amber-50 text-amber-700 border-amber-100' :
+                                                'bg-slate-50 text-slate-500 border-slate-100'
+                                            }`}>
+                                            {order.status}
+                                        </span>
+                                    </div>
                                 </div>
-                                <span className="font-bold text-gray-700 group-hover:text-purple-700">Clients</span>
-                            </Link>
-                            <Link to="/analytics" className="flex flex-col items-center justify-center p-6 bg-white border-2 border-dashed border-gray-200 rounded-2xl hover:border-green-500 hover:bg-green-50/30 transition-all group shadow-sm hover:shadow-md">
-                                <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                                    <FiDollarSign size={24} />
-                                </div>
-                                <span className="font-bold text-gray-700 group-hover:text-green-700">Analytics</span>
-                            </Link>
+                            ))}
+                            {(!stats?.recentOrders || stats.recentOrders.length === 0) && (
+                                <div className="py-12 text-center text-slate-400 font-medium">No recent activity</div>
+                            )}
                         </div>
                     </div>
                 </div>
 
-                {/* Right Column: Upcoming Schedule */}
+                {/* Right Column: Assistant / Reminders - Modern Slate Card */}
                 <div className="space-y-6">
-                    {(stats?.upcomingTrials?.length > 0 || stats?.upcomingDeliveries?.length > 0) ? (
-                        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden transform transition-all hover:shadow-xl">
-                            <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-5">
-                                <h2 className="text-white font-bold flex items-center gap-2">
-                                    <FiCalendar /> Upcoming Schedule
-                                </h2>
-                            </div>
-                            <div className="p-5 space-y-6">
-                                {stats.upcomingTrials?.length > 0 && (
-                                    <div>
-                                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Upcoming Trials</h3>
-                                        <div className="space-y-3">
-                                            {stats.upcomingTrials.map(order => (
-                                                <Link key={order.id} to={`/orders/${order.id}`} className="flex items-center gap-4 p-3 rounded-xl bg-gray-50 border border-gray-100 hover:bg-blue-50 hover:border-blue-100 hover:shadow-sm transition-all group">
-                                                    <div className="w-12 h-12 bg-white rounded-xl flex flex-col items-center justify-center text-gray-700 font-bold shadow-sm shrink-0 border border-gray-100">
-                                                        <span className="text-xs text-gray-400 uppercase">{new Date(order.trialDate).toLocaleDateString('en-US', { month: 'short' })}</span>
-                                                        <span className="text-lg leading-none">{new Date(order.trialDate).getDate()}</span>
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="font-bold text-gray-800 truncate group-hover:text-blue-600 transition-colors">{order.client.name}</p>
-                                                        <p className="text-xs text-gray-500">Order #{order.orderNumber}</p>
-                                                    </div>
-                                                </Link>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
+                    <div className="card-premium p-6">
+                        <h2 className="text-xl font-bold text-slate-800 border-b border-slate-100 pb-4 mb-4 flex items-center gap-2">
+                            Studio Assistant
+                            {reminders?.overdueTrials?.length > 0 && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-glow-red" />}
+                        </h2>
 
-                                {stats.upcomingDeliveries?.length > 0 && (
-                                    <div>
-                                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Upcoming Deliveries</h3>
-                                        <div className="space-y-3">
-                                            {stats.upcomingDeliveries.map(order => (
-                                                <Link key={order.id} to={`/orders/${order.id}`} className="flex items-center gap-4 p-3 rounded-xl bg-gray-50 border border-gray-100 hover:bg-green-50 hover:border-green-100 hover:shadow-sm transition-all group">
-                                                    <div className="w-12 h-12 bg-white rounded-xl flex flex-col items-center justify-center text-gray-700 font-bold shadow-sm shrink-0 border border-gray-100">
-                                                        <span className="text-xs text-gray-400 uppercase">{new Date(order.deliveryDate).toLocaleDateString('en-US', { month: 'short' })}</span>
-                                                        <span className="text-lg leading-none">{new Date(order.deliveryDate).getDate()}</span>
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="font-bold text-gray-800 truncate group-hover:text-green-600 transition-colors">{order.client.name}</p>
-                                                        <p className="text-xs text-gray-500">Order #{order.orderNumber}</p>
-                                                    </div>
-                                                </Link>
-                                            ))}
+                        <div className="space-y-4">
+                            {/* Overdue Alerts - High Importance */}
+                            {reminders?.overdueTrials?.map(item => (
+                                <div key={item._id} className="bg-red-50 border border-red-100 p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex gap-3">
+                                            <div className="mt-0.5 text-red-500"><FiBell /></div>
+                                            <div>
+                                                <p className="text-xs font-bold text-red-600 uppercase tracking-wide mb-0.5">Trial Overdue</p>
+                                                <p className="font-bold text-slate-900 text-sm">{item.client?.name}</p>
+                                            </div>
+                                        </div>
+                                        <span className="text-[10px] font-bold bg-white text-red-600 px-2 py-1 rounded-lg border border-red-100 shadow-sm">
+                                            {item.daysOverdue} Days
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Today's Schedule - Modern */}
+                            {reminders?.todaysTrials?.map(item => (
+                                <div key={item._id} className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm hover:border-darji-accent/50 transition-colors cursor-pointer group">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                            <FiClock size={16} />
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Today's Schedule</p>
+                                            <p className="font-bold text-slate-900 line-clamp-1">{item.client?.name} (Trial)</p>
                                         </div>
                                     </div>
-                                )}
-                            </div>
+                                </div>
+                            ))}
+
+                            {/* Upcoming Trials - Modern */}
+                            {reminders?.upcomingTrials?.map(item => (
+                                <div key={item._id} className="bg-slate-50 border border-slate-100 p-3 rounded-xl hover:bg-white hover:shadow-sm transition-all">
+                                    <div className="flex justify-between items-center">
+                                        <div>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                                                {new Date(item.trialDate).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })}
+                                            </p>
+                                            <p className="font-bold text-slate-800 text-sm">{item.client?.name}</p>
+                                        </div>
+                                        <span className="text-xs font-semibold text-darji-accent bg-indigo-50 px-2 py-1 rounded-md">Trial</span>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {reminders?.pendingPayments?.length > 0 && (
+                                <div className="bg-slate-900 text-white p-5 rounded-xl shadow-lg shadow-slate-900/10">
+                                    <div className="flex items-center gap-4 mb-3">
+                                        <div className="p-2 bg-white/10 rounded-lg backdrop-blur-sm">
+                                            <FiCreditCard className="text-white" size={20} />
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Finance</p>
+                                            <p className="font-bold text-white text-lg">{reminders.pendingPayments.length} Pending Payments</p>
+                                        </div>
+                                    </div>
+                                    <Link to="/orders" className="block w-full text-center py-2 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold transition-colors uppercase tracking-wide">
+                                        View Details
+                                    </Link>
+                                </div>
+                            )}
+
+                            {!reminders?.overdueTrials?.length && !reminders?.todaysTrials?.length && !reminders?.upcomingTrials?.length && (
+                                <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                    <FiCheckCircle size={24} className="mx-auto text-emerald-500 mb-2" />
+                                    <p className="text-sm font-semibold text-slate-700">All caught up</p>
+                                    <p className="text-xs text-slate-400">No urgent alerts for today.</p>
+                                </div>
+                            )}
                         </div>
-                    ) : (
-                        <div className="bg-white rounded-2xl p-8 border border-gray-100 text-center shadow-sm">
-                            <div className="w-16 h-16 bg-gray-50 text-gray-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <FiCalendar size={32} />
-                            </div>
-                            <h3 className="font-bold text-gray-800">Clear Schedule</h3>
-                            <p className="text-gray-500 text-sm mt-1">No upcoming trials or deliveries this week.</p>
-                        </div>
-                    )}
+                    </div>
                 </div>
             </div>
         </div>

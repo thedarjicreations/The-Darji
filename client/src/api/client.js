@@ -7,9 +7,9 @@ const getApiBaseUrl = () => {
         return import.meta.env.VITE_API_URL;
     }
 
-    // For network access, use the current host but backend port
-    const currentHost = window.location.hostname;
-    return `http://${currentHost}:5000/api`;
+    // Use relative path to leverage Vite proxy in development
+    // This avoids CORS issues when accessing from other devices on the network
+    return '/api';
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -20,7 +20,7 @@ const api = axios.create({
 
 // Add auth token to requests
 api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('jwtToken');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
     }
@@ -32,7 +32,8 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
-            localStorage.removeItem('token');
+            localStorage.removeItem('jwtToken');
+            localStorage.removeItem('user');
             window.location.href = '/login';
         }
         return Promise.reject(error);

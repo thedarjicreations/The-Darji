@@ -1,11 +1,14 @@
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
-import { PrismaClient } from '@prisma/client';
+import { fileURLToPath } from 'url';
+import Invoice from '../models/Invoice.js';
+import logger from '../config/logger.js';
+import { uploadInvoiceToS3, isS3Configured } from './s3Service.js';
 
-const prisma = new PrismaClient();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export async function generateInvoice(order) {
+export async function generateInvoice(order, userId = null, existingInvoice = null) {
     const maxRetries = 5;
     let lastError;
 
@@ -16,27 +19,31 @@ export async function generateInvoice(order) {
                 fs.mkdirSync(invoicesDir, { recursive: true });
             }
 
-            // Get the last invoice to find the highest invoice number
-            const lastInvoice = await prisma.invoice.findFirst({
-                orderBy: {
-                    createdAt: 'desc'
-                },
-                select: {
-                    invoiceNumber: true
-                }
-            });
+            let invoiceNumber;
 
-            let nextNumber = 1;
-            if (lastInvoice && lastInvoice.invoiceNumber) {
-                // Extract the number from the last invoice number (format: TD-2025-XXXX)
-                const match = lastInvoice.invoiceNumber.match(/TD-2025-(\d+)/);
-                if (match) {
-                    nextNumber = parseInt(match[1], 10) + 1;
+            if (existingInvoice) {
+                // Reuse existing number
+                invoiceNumber = existingInvoice.invoiceNumber;
+            } else {
+                // Get the last invoice to find the highest invoice number
+                const lastInvoice = await Invoice.findOne()
+                    .sort({ createdAt: -1 })
+                    .select('invoiceNumber')
+                    .lean();
+
+                let nextNumber = 1;
+                const year = new Date().getFullYear();
+
+                if (lastInvoice && lastInvoice.invoiceNumber) {
+                    // Extract the number from the last invoice number (format: TD-YYYY-XXXX)
+                    const match = lastInvoice.invoiceNumber.match(/TD-\d{4}-(\d+)/);
+                    if (match) {
+                        nextNumber = parseInt(match[1], 10) + 1;
+                    }
                 }
+                // Add attempt number to handle race conditions unique to NEW invoices
+                invoiceNumber = `TD-${year}-${String(nextNumber + attempt).padStart(4, '0')}`;
             }
-
-            // Add attempt number to handle race conditions
-            const invoiceNumber = `TD-2025-${String(nextNumber + attempt).padStart(4, '0')}`;
 
             const cleanClientName = order.client.name.replace(/\s+/g, '');
             const fileName = `Invoice_${invoiceNumber}_${cleanClientName}.pdf`;
@@ -295,7 +302,7 @@ export async function generateInvoice(order) {
             });
 
             // === OTHER SERVICES SECTION ===
-            const hasNewFormat = order.additionalServiceItems && order.additionalServiceItems.length > 0;
+            const hasNewFormat = order.additionalServices && Array.isArray(order.additionalServices) && order.additionalServices.length > 0;
             const hasOldFormat = (order.additionalServicesAmount || 0) > 0;
             let additionalTotal = 0;
 
@@ -318,7 +325,7 @@ export async function generateInvoice(order) {
                     .fillColor(textColor);
 
                 if (hasNewFormat) {
-                    const serviceItems = order.additionalServiceItems || [];
+                    const serviceItems = order.additionalServices || [];
                     serviceItems.forEach(service => {
                         // Check if we need a new page
                         const itemHeight = 22;
@@ -509,37 +516,62 @@ export async function generateInvoice(order) {
 
             await new Promise((resolve) => stream.on('finish', resolve));
 
-            const invoice = await prisma.invoice.create({
-                data: {
-                    orderId: order.id,
-                    invoiceNumber,
-                    pdfPath: `invoices/${fileName}`
+            // Try to upload to S3 if configured
+            let s3Key;
+            if (isS3Configured()) {
+                try {
+                    const pdfBuffer = fs.readFileSync(filePath);
+                    const s3Result = await uploadInvoiceToS3(pdfBuffer, fileName);
+                    s3Key = s3Result.s3Key;
+                    logger.info(`Invoice uploaded to S3: ${s3Key}`);
+                } catch (s3Error) {
+                    logger.warn(`S3 upload failed, using local storage: ${s3Error.message}`);
                 }
-            });
+            }
 
+            let invoice;
+            if (existingInvoice) {
+                existingInvoice.s3Key = s3Key;
+                /* Strip pdfPath to basename just in case, or keep as is. Logic above uses standard name. */
+                existingInvoice.pdfPath = `invoices/${fileName}`;
+                // Don't change generatedBy or number
+                invoice = await existingInvoice.save();
+                logger.info(`Invoice updated: ${invoiceNumber}`);
+            } else {
+                invoice = await Invoice.create({
+                    order: order._id,
+                    invoiceNumber,
+                    pdfPath: `invoices/${fileName}`,
+                    s3Key,
+                    generatedBy: userId,
+                });
+                logger.info(`Invoice generated: ${invoiceNumber}`);
+            }
+            return invoice;
+
+            logger.info(`Invoice generated: ${invoiceNumber}`);
             return invoice;
         } catch (error) {
             lastError = error;
 
-            // Check if this is a unique constraint error on invoiceNumber
-            if (error.code === 'P2002' && error.meta?.target?.includes('invoiceNumber')) {
-                console.log(`Invoice number collision on attempt ${attempt + 1}, retrying...`);
+            // Check if this is a unique constraint error on invoiceNumber (MongoDB)
+            if (error.code === 11000 && error.keyPattern?.invoiceNumber) {
+                logger.warn(`Invoice number collision on attempt ${attempt + 1}, retrying...`);
                 // Wait a bit before retrying to reduce contention
                 await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
                 continue;
             }
 
             // If it's not a unique constraint error, throw immediately
-            console.error('Error generating invoice:', error);
-            console.error('Error message:', error.message);
-            console.error('Error stack:', error.stack);
-            console.error('Order data:', JSON.stringify(order, null, 2));
+            logger.error('Error generating invoice:', error);
+            logger.error('Error message:', error.message);
+            logger.error('Error stack:', error.stack);
             throw error;
         }
     }
 
     // If we've exhausted all retries
-    console.error('Failed to generate invoice after all retries');
-    console.error('Last error:', lastError);
+    logger.error('Failed to generate invoice after all retries');
+    logger.error('Last error:', lastError);
     throw lastError;
 }

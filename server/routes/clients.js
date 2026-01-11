@@ -1,304 +1,168 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import Client from '../models/Client.js';
+import Order from '../models/Order.js';
+import { validate } from '../middleware/validation.js';
+import { createClientSchema, updateClientSchema } from '../validators/clientValidator.js';
 import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
-// Get all clients
-router.get('/', authenticate, async (req, res) => {
-    try {
-        const clients = await prisma.client.findMany({
-            orderBy: { createdAt: 'desc' },
-            include: {
-                orders: {
-                    select: {
-                        id: true,
-                        orderNumber: true,
-                        totalAmount: true,
-                        status: true,
-                        createdAt: true
-                    }
-                }
-            }
-        });
-        res.json(clients);
-    } catch (error) {
-        console.error('Error fetching clients:', error);
-        res.status(500).json({ error: 'Failed to fetch clients' });
+// All routes require authentication
+router.use(authenticate);
+
+/**
+ * @route   GET /api/clients
+ * @desc    Get all clients with pagination and search
+ * @access  Private
+ */
+router.get('/', asyncHandler(async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 1000; // Increased default limit for client cards
+    const search = req.query.search;
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
+
+    let query = {};
+
+    // Text search
+    if (search) {
+        query = {
+            $or: [
+                { name: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+            ],
+        };
     }
-});
 
-// Search clients
-router.get('/search', authenticate, async (req, res) => {
-    try {
-        const { query } = req.query;
+    const clients = await Client.find(query)
+        .sort({ [sortBy]: sortOrder })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean();
 
-        const clients = await prisma.client.findMany({
-            where: {
-                OR: [
-                    { name: { contains: query, mode: 'insensitive' } },
-                    { phone: { contains: query } }
-                ]
-            },
-            take: 10
-        });
+    // Fetch orders for all clients in one query
+    const clientIds = clients.map(c => c._id);
+    const orders = await Order.find({ client: { $in: clientIds } })
+        .select('client totalAmount finalAmount advance status')
+        .lean();
 
-        res.json(clients);
-    } catch (error) {
-        console.error('Error searching clients:', error);
-        res.status(500).json({ error: 'Failed to search clients' });
+    // Group orders by client
+    const ordersByClient = orders.reduce((acc, order) => {
+        const clientId = order.client.toString();
+        if (!acc[clientId]) acc[clientId] = [];
+        acc[clientId].push(order);
+        return acc;
+    }, {});
+
+    // Attach order data to each client
+    const clientsWithOrders = clients.map(client => ({
+        ...client,
+        orders: ordersByClient[client._id.toString()] || []
+    }));
+
+    const total = await Client.countDocuments(query);
+
+    res.json({
+        clients: clientsWithOrders,
+        pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit),
+        },
+    });
+}));
+
+/**
+ * @route   GET /api/clients/:id
+ * @desc    Get client by ID with order history
+ * @access  Private
+ */
+router.get('/:id', asyncHandler(async (req, res) => {
+    const client = await Client.findById(req.params.id);
+
+    if (!client) {
+        return res.status(404).json({ error: 'Client not found' });
     }
-});
 
-// Get client by ID
-router.get('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
+    // Get client's orders
+    const orders = await Order.find({ client: req.params.id })
+        .populate('items.garmentType', 'name price')
+        .sort({ createdAt: -1 })
+        .limit(50);
 
-        const client = await prisma.client.findUnique({
-            where: { id },
-            include: {
-                orders: {
-                    include: {
-                        items: {
-                            include: {
-                                garmentType: true
-                            }
-                        }
-                    },
-                    orderBy: { createdAt: 'desc' }
-                },
-                messages: true
-            }
-        });
+    // Calculate statistics
+    const stats = {
+        totalOrders: orders.length,
+        totalSpent: orders.reduce((sum, order) => sum + (order.finalAmount || order.totalAmount), 0),
+        pendingBalance: orders.reduce((sum, order) => sum + order.balance, 0),
+        completedOrders: orders.filter(o => o.status === 'Completed' || o.status === 'Delivered').length,
+    };
 
-        if (!client) {
-            return res.status(404).json({ error: 'Client not found' });
-        }
+    res.json({
+        ...client.toObject(),
+        orders,
+        stats,
+    });
+}));
 
-        res.json(client);
-    } catch (error) {
-        console.error('Error fetching client:', error);
-        res.status(500).json({ error: 'Failed to fetch client' });
+/**
+ * @route   POST /api/clients
+ * @desc    Create new client
+ * @access  Private
+ */
+router.post('/', validate(createClientSchema), asyncHandler(async (req, res) => {
+    const client = await Client.create(req.body);
+    res.status(201).json(client);
+}));
+
+/**
+ * @route   PUT /api/clients/:id
+ * @desc    Update client
+ * @access  Private
+ */
+router.put('/:id', validate(updateClientSchema), asyncHandler(async (req, res) => {
+    const client = await Client.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+    );
+
+    if (!client) {
+        return res.status(404).json({ error: 'Client not found' });
     }
-});
 
-// Create client
-router.post('/', authenticate, async (req, res) => {
-    try {
-        const { name, phone, email, address } = req.body;
+    res.json(client);
+}));
 
-        const client = await prisma.client.create({
-            data: { name, phone, email, address }
+/**
+ * @route   DELETE /api/clients/:id
+ * @desc    Delete client
+ * @access  Private
+ */
+router.delete('/:id', asyncHandler(async (req, res) => {
+    // Check if client has orders
+    const orderCount = await Order.countDocuments({ client: req.params.id });
+
+    if (orderCount > 0) {
+        return res.status(400).json({
+            error: 'Cannot delete client with existing orders',
+            orderCount,
         });
-
-        res.status(201).json(client);
-    } catch (error) {
-        console.error('Error creating client:', error);
-        res.status(500).json({ error: 'Failed to create client' });
     }
-});
 
-// Update client
-router.put('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { name, phone, email, address } = req.body;
+    const client = await Client.findByIdAndDelete(req.params.id);
 
-        const client = await prisma.client.update({
-            where: { id },
-            data: { name, phone, email, address }
-        });
-
-        res.json(client);
-    } catch (error) {
-        console.error('Error updating client:', error);
-        res.status(500).json({ error: 'Failed to update client' });
+    if (!client) {
+        return res.status(404).json({ error: 'Client not found' });
     }
-});
 
-// Get client outstanding amount and payment details
-router.get('/:id/outstanding', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const client = await prisma.client.findUnique({
-            where: { id },
-            include: {
-                orders: {
-                    select: {
-                        id: true,
-                        orderNumber: true,
-                        status: true,
-                        totalAmount: true,
-                        finalAmount: true,
-                        advance: true,
-                        createdAt: true,
-                        deliveryDate: true
-                    }
-                }
-            }
-        });
-
-        if (!client) {
-            return res.status(404).json({ error: 'Client not found' });
-        }
-
-        // Calculate outstanding for non-delivered orders
-        const outstandingOrders = client.orders
-            .filter(order => order.status !== 'Delivered')
-            .map(order => {
-                const totalDue = order.finalAmount ?? order.totalAmount;
-                const paid = order.advance || 0;
-                const outstanding = totalDue - paid;
-
-                return {
-                    orderId: order.id,
-                    orderNumber: order.orderNumber,
-                    status: order.status,
-                    totalAmount: totalDue,
-                    paid: paid,
-                    outstanding: outstanding,
-                    deliveryDate: order.deliveryDate,
-                    createdAt: order.createdAt
-                };
-            });
-
-        const totalOutstanding = outstandingOrders.reduce((sum, order) => sum + order.outstanding, 0);
-
-        // Payment history (all orders)
-        const paymentHistory = client.orders.map(order => ({
-            orderNumber: order.orderNumber,
-            totalAmount: order.finalAmount ?? order.totalAmount,
-            advance: order.advance || 0,
-            status: order.status,
-            createdAt: order.createdAt
-        }));
-
-        res.json({
-            clientId: id,
-            clientName: client.name,
-            totalOutstanding,
-            outstandingOrders,
-            paymentHistory
-        });
-    } catch (error) {
-        console.error('Error fetching client outstanding:', error);
-        res.status(500).json({ error: 'Failed to fetch outstanding amount' });
-    }
-});
-
-// Send payment reminder
-router.post('/:id/payment-reminder', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const client = await prisma.client.findUnique({
-            where: { id },
-            include: {
-                orders: {
-                    where: {
-                        status: { not: 'Delivered' }
-                    },
-                    select: {
-                        orderNumber: true,
-                        totalAmount: true,
-                        finalAmount: true,
-                        advance: true
-                    }
-                }
-            }
-        });
-
-        if (!client) {
-            return res.status(404).json({ error: 'Client not found' });
-        }
-
-        // Calculate total outstanding
-        const totalOutstanding = client.orders.reduce((sum, order) => {
-            const totalDue = order.finalAmount ?? order.totalAmount;
-            const paid = order.advance || 0;
-            return sum + (totalDue - paid);
-        }, 0);
-
-        if (totalOutstanding <= 0) {
-            return res.status(400).json({ error: 'No outstanding payments for this client' });
-        }
-
-        // Create payment reminder message
-        const ordersList = client.orders
-            .map(order => `• ${order.orderNumber}: ₹${(order.finalAmount ?? order.totalAmount) - (order.advance || 0)}`)
-            .join('\n');
-
-        const message = `Hello ${client.name},\n\nThis is a friendly reminder about your pending payment.\n\nOutstanding Amount: ₹${totalOutstanding.toFixed(2)}\n\nPending Orders:\n${ordersList}\n\nPlease contact us to complete the payment.\n\nThank you!\n- The Darji`;
-
-        // Save message record
-        const messageRecord = await prisma.message.create({
-            data: {
-                clientId: id,
-                type: 'PaymentReminder',
-                content: message,
-                status: 'Pending'
-            }
-        });
-
-        // Send WhatsApp message (using existing service)
-        const whatsappUrl = `https://wa.me/${client.phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
-
-        res.json({
-            message: 'Payment reminder prepared',
-            whatsappUrl,
-            messageId: messageRecord.id,
-            totalOutstanding
-        });
-    } catch (error) {
-        console.error('Error sending payment reminder:', error);
-        res.status(500).json({ error: 'Failed to send payment reminder' });
-    }
-});
-
-// Delete client
-router.delete('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        // Check if client has orders
-        const client = await prisma.client.findUnique({
-            where: { id },
-            include: {
-                orders: true,
-                messages: true
-            }
-        });
-
-        if (!client) {
-            return res.status(404).json({ error: 'Client not found' });
-        }
-
-        if (client.orders.length > 0) {
-            return res.status(400).json({
-                error: `Cannot delete client with existing orders. This client has ${client.orders.length} order(s). Please delete all orders first.`
-            });
-        }
-
-        // Delete any messages associated with this client first
-        if (client.messages.length > 0) {
-            await prisma.message.deleteMany({
-                where: { clientId: id }
-            });
-        }
-
-        // Now delete the client
-        await prisma.client.delete({
-            where: { id }
-        });
-
-        res.json({ message: 'Client deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting client:', error);
-        res.status(500).json({ error: 'Failed to delete client' });
-    }
-});
+    res.json({
+        message: 'Client deleted successfully',
+        client,
+    });
+}));
 
 export default router;

@@ -1,98 +1,130 @@
 import express from 'express';
-import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
+import User from '../models/User.js';
+import { validate } from '../middleware/validation.js';
+import { registerSchema, loginSchema } from '../validators/authValidator.js';
+import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import logger from '../config/logger.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
-// Register (First-time setup)
-router.post('/register', async (req, res) => {
-    try {
-        const { username, password, name } = req.body;
+/**
+ * @route   POST /api/auth/register
+ * @desc    Register a new user
+ * @access  Public
+ */
+router.post('/register', validate(registerSchema), asyncHandler(async (req, res) => {
+    const { username, password, name, role } = req.body;
 
-        // Check if user already exists
-        const existingUser = await prisma.user.findUnique({
-            where: { username }
-        });
+    // Create user (password will be hashed by pre-save hook)
+    const user = await User.create({
+        username,
+        password,
+        name,
+        role: role || 'user',
+    });
 
-        if (existingUser) {
-            return res.status(400).json({ error: 'User already exists' });
-        }
+    // Generate JWT token
+    const token = jwt.sign(
+        { userId: user._id, username: user.username, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
 
-        // Hash password
-        const hashedPassword = await bcrypt.hash(password, 10);
+    logger.info(`User registered: ${user.username}`);
 
-        // Create user
-        const user = await prisma.user.create({
-            data: {
-                username,
-                password: hashedPassword,
-                name
-            }
-        });
+    res.status(201).json({
+        message: 'User registered successfully',
+        token,
+        user: {
+            id: user._id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+        },
+    });
+}));
 
-        // Generate token
-        const token = jwt.sign(
-            { userId: user.id },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+/**
+ * @route   POST /api/auth/login
+ * @desc    Login user
+ * @access  Public
+ */
+router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
+    const { username, password } = req.body;
 
-        res.json({
-            token,
-            user: {
-                id: user.id,
-                username: user.username,
-                name: user.name
-            }
-        });
-    } catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({ error: 'Registration failed' });
+    // Find user
+    const user = await User.findOne({ username, isActive: true });
+    if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
     }
-});
 
-// Login
-router.post('/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-
-        // Find user
-        const user = await prisma.user.findUnique({
-            where: { username }
-        });
-
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        // Verify password
-        const validPassword = await bcrypt.compare(password, user.password);
-
-        if (!validPassword) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        // Generate token
-        const token = jwt.sign(
-            { userId: user.id },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
-
-        res.json({
-            token,
-            user: {
-                id: user.id,
-                username: user.username,
-                name: user.name
-            }
-        });
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ error: 'Login failed' });
+    // Check password
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+        return res.status(401).json({ error: 'Invalid credentials' });
     }
-});
+
+    // Generate JWT token
+    const token = jwt.sign(
+        { userId: user._id, username: user.username, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    logger.info(`User logged in: ${user.username}`);
+
+    res.json({
+        message: 'Login successful',
+        token,
+        user: {
+            id: user._id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+        },
+    });
+}));
+
+/**
+ * @route   GET /api/auth/me
+ * @desc    Get current user
+ * @access  Private
+ */
+router.get('/me', authenticate, asyncHandler(async (req, res) => {
+    const user = await User.findById(req.userId).select('-password');
+
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(user);
+}));
+
+/**
+ * @route   POST /api/auth/refresh
+ * @desc    Refresh JWT token
+ * @access  Private
+ */
+router.post('/refresh', authenticate, asyncHandler(async (req, res) => {
+    const user = await User.findById(req.userId);
+
+    if (!user || !user.isActive) {
+        return res.status(401).json({ error: 'User not found or inactive' });
+    }
+
+    // Generate new token
+    const token = jwt.sign(
+        { userId: user._id, username: user.username, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    res.json({
+        message: 'Token refreshed',
+        token,
+    });
+}));
 
 export default router;

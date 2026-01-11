@@ -36,7 +36,7 @@ export default function Login() {
                     <div className="flex items-center gap-4 text-3xl font-black tracking-tighter">
                         <div className="w-16 h-16 rounded-2xl flex items-center justify-center overflow-hidden shadow-2xl shadow-black/50 border border-white/10 bg-black">
                             <img
-                                src={`http://${window.location.hostname}:5000/assets/logo.png`}
+                                src="/logo.png"
                                 alt="The Darji"
                                 className="w-full h-full object-cover"
                             />

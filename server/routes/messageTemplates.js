@@ -1,149 +1,117 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import MessageTemplate from '../models/MessageTemplate.js';
 import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
-// Get all message templates
-router.get('/', authenticate, async (req, res) => {
-    try {
-        const { type } = req.query;
+// All routes require authentication
+router.use(authenticate);
 
-        const templates = await prisma.messageTemplate.findMany({
-            where: type ? { type } : {},
-            orderBy: { createdAt: 'desc' }
-        });
+/**
+ * @route   GET /api/message-templates
+ * @desc    Get all message templates
+ * @access  Private
+ */
+router.get('/', asyncHandler(async (req, res) => {
+    const { type, isActive } = req.query;
 
-        res.json(templates);
-    } catch (error) {
-        console.error('Error fetching message templates:', error);
-        res.status(500).json({ error: 'Failed to fetch templates' });
+    let query = {};
+    if (type) query.type = type;
+    if (isActive !== undefined) query.isActive = isActive === 'true';
+
+    const templates = await MessageTemplate.find(query).sort({ name: 1 });
+
+    res.json(templates);
+}));
+
+/**
+ * @route   GET /api/message-templates/:id
+ * @desc    Get template by ID
+ * @access  Private
+ */
+router.get('/:id', asyncHandler(async (req, res) => {
+    const template = await MessageTemplate.findById(req.params.id);
+
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Get single template
-router.get('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
+    res.json(template);
+}));
 
-        const template = await prisma.messageTemplate.findUnique({
-            where: { id }
-        });
+/**
+ * @route   POST /api/message-templates
+ * @desc    Create new template
+ * @access  Private
+ */
+router.post('/', asyncHandler(async (req, res) => {
+    const template = await MessageTemplate.create(req.body);
+    res.status(201).json(template);
+}));
 
-        if (!template) {
-            return res.status(404).json({ error: 'Template not found' });
-        }
+/**
+ * @route   PUT /api/message-templates/:id
+ * @desc    Update template
+ * @access  Private
+ */
+router.put('/:id', asyncHandler(async (req, res) => {
+    const template = await MessageTemplate.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+    );
 
-        res.json(template);
-    } catch (error) {
-        console.error('Error fetching template:', error);
-        res.status(500).json({ error: 'Failed to fetch template' });
+    // If activating this template, deactivate others of the same type
+    if (template && req.body.isActive === true) {
+        await MessageTemplate.updateMany(
+            { type: template.type, _id: { $ne: template._id } },
+            { $set: { isActive: false } }
+        );
     }
-});
 
-// Create new template
-router.post('/', authenticate, async (req, res) => {
-    try {
-        const { name, type, content, isActive } = req.body;
-
-        if (!name || !type || !content) {
-            return res.status(400).json({ error: 'Name, type, and content are required' });
-        }
-
-        const template = await prisma.messageTemplate.create({
-            data: {
-                name,
-                type,
-                content,
-                isActive: isActive !== undefined ? isActive : true
-            }
-        });
-
-        res.status(201).json(template);
-    } catch (error) {
-        console.error('Error creating template:', error);
-        res.status(500).json({ error: 'Failed to create template' });
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Update template
-router.put('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { name, type, content, isActive } = req.body;
+    res.json(template);
+}));
 
-        const template = await prisma.messageTemplate.update({
-            where: { id },
-            data: {
-                name,
-                type,
-                content,
-                isActive
-            }
-        });
+/**
+ * @route   POST /api/message-templates/:id/render
+ * @desc    Render template with data
+ * @access  Private
+ */
+router.post('/:id/render', asyncHandler(async (req, res) => {
+    const template = await MessageTemplate.findById(req.params.id);
 
-        res.json(template);
-    } catch (error) {
-        console.error('Error updating template:', error);
-        res.status(500).json({ error: 'Failed to update template' });
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Delete template
-router.delete('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
+    const rendered = template.render(req.body);
 
-        await prisma.messageTemplate.delete({
-            where: { id }
-        });
+    // Update usage stats
+    template.usageCount += 1;
+    template.lastUsedAt = new Date();
+    await template.save();
 
-        res.json({ message: 'Template deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting template:', error);
-        res.status(500).json({ error: 'Failed to delete template' });
+    res.json({ rendered, variables: template.variables });
+}));
+
+/**
+ * @route   DELETE /api/message-templates/:id
+ * @desc    Delete template
+ * @access  Private
+ */
+router.delete('/:id', asyncHandler(async (req, res) => {
+    const template = await MessageTemplate.findByIdAndDelete(req.params.id);
+
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Preview template with sample data
-router.post('/preview', authenticate, async (req, res) => {
-    try {
-        const { content, sampleData } = req.body;
-
-        const preview = replaceTemplateVariables(content, sampleData);
-
-        res.json({ preview });
-    } catch (error) {
-        console.error('Error previewing template:', error);
-        res.status(500).json({ error: 'Failed to preview template' });
-    }
-});
-
-// Helper function to replace template variables
-function replaceTemplateVariables(template, data) {
-    let result = template;
-
-    const variables = {
-        clientName: data.clientName || '[Client Name]',
-        orderNumber: data.orderNumber || '[Order Number]',
-        trialDate: data.trialDate ? new Date(data.trialDate).toLocaleDateString('en-IN') : '[Trial Date]',
-        deliveryDate: data.deliveryDate ? new Date(data.deliveryDate).toLocaleDateString('en-IN') : '[Delivery Date]',
-        totalAmount: data.totalAmount ? `₹${data.totalAmount.toFixed(2)}` : '[Total Amount]',
-        advance: data.advance ? `₹${data.advance.toFixed(2)}` : '[Advance]',
-        balance: data.balance ? `₹${data.balance.toFixed(2)}` : '[Balance]',
-        shopName: 'The Darji',
-        shopPhone: data.shopPhone || '+91 98765 43210'
-    };
-
-    // Replace all variables
-    Object.keys(variables).forEach(key => {
-        const regex = new RegExp(`{{${key}}}`, 'gi');
-        result = result.replace(regex, variables[key]);
-    });
-
-    return result;
-}
+    res.json({ message: 'Template deleted successfully', template });
+}));
 
 export default router;
-export { replaceTemplateVariables };

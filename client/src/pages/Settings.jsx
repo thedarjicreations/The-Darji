@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/client';
-import { FiEdit2, FiPlus, FiSave, FiX, FiSettings, FiScissors, FiDollarSign, FiInfo, FiTrash2, FiTag, FiPhone, FiMail, FiMapPin } from 'react-icons/fi';
+import { FiEdit2, FiPlus, FiSave, FiX, FiSettings, FiScissors, FiInfo, FiTrash2, FiTag, FiPhone, FiMail, FiMapPin } from 'react-icons/fi';
+import { useToast } from '../context/ToastContext';
 
 export default function Settings() {
+    const { showToast } = useToast();
     const [garmentTypes, setGarmentTypes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
@@ -26,25 +28,23 @@ export default function Settings() {
     }, []);
 
     const fetchBusinessInfo = async () => {
-        try {
-            // Import the env variables from the backend
-            setBusinessInfo({
-                name: 'The Darji',
-                phone: '+91-8854017433',
-                email: 'thedarji.creations@gmail.com',
-                address: 'Jaipur, Rajasthan'
-            });
-        } catch (error) {
-            console.error('Error fetching business info:', error);
-        }
+        // In a real app, this should come from a 'Settings' collection
+        // For now, hardcode or fetch from env/database
+        setBusinessInfo({
+            name: 'The Darji',
+            phone: '+91-8854017433',
+            email: 'thedarji.creations@gmail.com',
+            address: 'Jaipur, Rajasthan'
+        });
     };
 
     const fetchGarmentTypes = async () => {
         try {
             const response = await api.get('/garments');
-            setGarmentTypes(response.data);
+            setGarmentTypes(response.data || []);
         } catch (error) {
             console.error('Error fetching garment types:', error);
+            showToast(error.response?.data?.error || 'Failed to load garment types', 'error');
         } finally {
             setLoading(false);
         }
@@ -84,14 +84,17 @@ export default function Settings() {
 
             if (editingGarment) {
                 await api.put(`/garments/${editingGarment.id}`, data);
+                showToast('Garment updated successfully', 'success');
             } else {
                 await api.post('/garments', data);
+                showToast('Garment added successfully', 'success');
             }
 
             fetchGarmentTypes();
             handleCloseModal();
         } catch (error) {
-            alert(error.response?.data?.error || 'Failed to save garment type');
+            console.error('Error saving garment:', error);
+            showToast(error.response?.data?.error || 'Failed to save garment type', 'error');
         }
     };
 
@@ -101,8 +104,11 @@ export default function Settings() {
         try {
             await api.delete(`/garments/${id}`);
             fetchGarmentTypes();
+            showToast('Garment deleted successfully', 'success');
         } catch (error) {
-            alert('Failed to delete garment type');
+            console.error('Error deleting garment:', error);
+            const errorMsg = error.response?.data?.error || 'Failed to delete garment type';
+            showToast(errorMsg, 'error');
         }
     };
 
@@ -111,7 +117,7 @@ export default function Settings() {
     }
 
     return (
-        <div className="fade-in max-w-7xl mx-auto pb-20 md:pb-0">
+        <div className="fade-in w-full max-w-full mx-auto pb-6 md:pb-0 overflow-x-hidden px-3 md:px-0">
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 pt-2">
                 <div>
@@ -138,7 +144,7 @@ export default function Settings() {
 
                         <div className="divide-y divide-gray-50">
                             {garmentTypes.map(garment => (
-                                <div key={garment.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-blue-50/20 transition-colors group">
+                                <div key={garment.id || garment._id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-blue-50/20 transition-colors group">
                                     <div className="flex-1">
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-400 font-bold text-lg">
@@ -155,23 +161,23 @@ export default function Settings() {
                                         <div className="flex gap-6">
                                             <div className="text-right">
                                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Price</div>
-                                                <div className="text-lg font-black text-gray-900">₹{garment.price.toFixed(0)}</div>
+                                                <div className="text-lg font-black text-gray-900">₹{parseFloat(garment.price).toFixed(0)}</div>
                                             </div>
                                             <div className="text-right border-l border-gray-100 pl-6">
                                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Cost</div>
-                                                <div className="text-lg font-bold text-gray-500">₹{(garment.cost || 0).toFixed(0)}</div>
+                                                <div className="text-lg font-bold text-gray-500">₹{(parseFloat(garment.cost) || 0).toFixed(0)}</div>
                                             </div>
                                         </div>
 
                                         <div className="flex gap-2">
                                             <button
-                                                onClick={() => handleOpenModal(garment)}
+                                                onClick={() => handleOpenModal({ ...garment, id: garment._id || garment.id })}
                                                 className="p-2 text-gray-400 hover:text-darji-accent hover:bg-white hover:shadow-md rounded-lg transition-all"
                                             >
                                                 <FiEdit2 size={18} />
                                             </button>
                                             <button
-                                                onClick={() => handleDelete(garment.id)}
+                                                onClick={() => handleDelete(garment._id || garment.id)}
                                                 className="p-2 text-gray-400 hover:text-red-500 hover:bg-white hover:shadow-md rounded-lg transition-all"
                                             >
                                                 <FiTrash2 size={18} />
@@ -188,26 +194,26 @@ export default function Settings() {
                 <div className="lg:col-span-1 space-y-6">
                     <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl shadow-lg p-6 text-white relative overflow-hidden">
                         <div className="absolute top-0 right-0 p-6 opacity-10"><FiInfo size={100} /></div>
-                        <h2 className="text-xl font-bold flex items-center gap-2 mb-6 relative z-10"><FiInfo /> Business Profile</h2>
+                        <h2 className="text-xl font-bold flex items-center gap-2 mb-6 relative z-10 text-white"><FiInfo /> Business Profile</h2>
 
                         <div className="space-y-6 relative z-10">
                             <div>
                                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Company Name</label>
-                                <div className="text-xl font-bold">{businessInfo.name || 'Not Set'}</div>
+                                <div className="text-xl font-bold text-white">{businessInfo.name || 'Not Set'}</div>
                             </div>
 
                             <div className="space-y-4 pt-4 border-t border-gray-700/50">
                                 <div className="flex items-center gap-3">
                                     <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center"><FiPhone size={14} /></div>
-                                    <div className="text-sm font-medium opacity-90">{businessInfo.phone || 'Not Set'}</div>
+                                    <div className="text-sm font-medium opacity-90 text-white">{businessInfo.phone || 'Not Set'}</div>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center"><FiMail size={14} /></div>
-                                    <div className="text-sm font-medium opacity-90">{businessInfo.email || 'Not Set'}</div>
+                                    <div className="text-sm font-medium opacity-90 text-white">{businessInfo.email || 'Not Set'}</div>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center"><FiMapPin size={14} /></div>
-                                    <div className="text-sm font-medium opacity-90">{businessInfo.address || 'Not Set'}</div>
+                                    <div className="text-sm font-medium opacity-90 text-white">{businessInfo.address || 'Not Set'}</div>
                                 </div>
                             </div>
                         </div>

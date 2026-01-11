@@ -1,141 +1,128 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import MeasurementTemplate from '../models/MeasurementTemplate.js';
 import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
-// Get all measurement templates (with optional client filter)
-router.get('/', authenticate, async (req, res) => {
-    try {
-        const { clientId } = req.query;
+// All routes require authentication
+router.use(authenticate);
 
-        const templates = await prisma.measurementTemplate.findMany({
-            where: clientId ? { clientId } : {},
-            include: {
-                client: { select: { name: true } },
-                garmentType: { select: { name: true } }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+/**
+ * @route   GET /api/measurement-templates
+ * @desc    Get all measurement templates
+ * @access  Private
+ */
+router.get('/', asyncHandler(async (req, res) => {
+    const { clientId, garmentTypeId } = req.query;
 
-        res.json(templates);
-    } catch (error) {
-        console.error('Error fetching measurement templates:', error);
-        res.status(500).json({ error: 'Failed to fetch templates' });
+    let query = {};
+    if (clientId) query.client = clientId;
+    if (garmentTypeId) query.garmentType = garmentTypeId;
+
+    const templates = await MeasurementTemplate.find(query)
+        .populate('client', 'name')
+        .populate('garmentType', 'name')
+        .sort({ createdAt: -1 });
+
+    res.json(templates);
+}));
+
+/**
+ * @route   GET /api/measurement-templates/client/:clientId
+ * @desc    Get all templates for a client
+ * @access  Private
+ */
+router.get('/client/:clientId', asyncHandler(async (req, res) => {
+    const templates = await MeasurementTemplate.find({ client: req.params.clientId })
+        .populate('garmentType', 'name')
+        .sort({ lastUsedAt: -1, createdAt: -1 });
+
+    res.json(templates);
+}));
+
+/**
+ * @route   GET /api/measurement-templates/:id
+ * @desc    Get template by ID
+ * @access  Private
+ */
+router.get('/:id', asyncHandler(async (req, res) => {
+    const template = await MeasurementTemplate.findById(req.params.id)
+        .populate('client', 'name phone')
+        .populate('garmentType', 'name');
+
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Get single template
-router.get('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
+    res.json(template);
+}));
 
-        const template = await prisma.measurementTemplate.findUnique({
-            where: { id },
-            include: {
-                client: true,
-                garmentType: true
-            }
-        });
+/**
+ * @route   POST /api/measurement-templates
+ * @desc    Create new template
+ * @access  Private
+ */
+router.post('/', asyncHandler(async (req, res) => {
+    const template = await MeasurementTemplate.create(req.body);
 
-        if (!template) {
-            return res.status(404).json({ error: 'Template not found' });
-        }
+    await template.populate('client', 'name');
+    await template.populate('garmentType', 'name');
 
-        res.json(template);
-    } catch (error) {
-        console.error('Error fetching template:', error);
-        res.status(500).json({ error: 'Failed to fetch template' });
+    res.status(201).json(template);
+}));
+
+/**
+ * @route   PUT /api/measurement-templates/:id
+ * @desc    Update template
+ * @access  Private
+ */
+router.put('/:id', asyncHandler(async (req, res) => {
+    const template = await MeasurementTemplate.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+    )
+        .populate('client', 'name')
+        .populate('garmentType', 'name');
+
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Create new template
-router.post('/', authenticate, async (req, res) => {
-    try {
-        const { name, clientId, garmentTypeId, measurements } = req.body;
+    res.json(template);
+}));
 
-        const template = await prisma.measurementTemplate.create({
-            data: {
-                name,
-                clientId: clientId || null,
-                garmentTypeId: garmentTypeId || null,
-                measurements: typeof measurements === 'string' ? measurements : JSON.stringify(measurements)
-            },
-            include: {
-                client: { select: { name: true } },
-                garmentType: { select: { name: true } }
-            }
-        });
+/**
+ * @route   POST /api/measurement-templates/:id/use
+ * @desc    Record template usage
+ * @access  Private
+ */
+router.post('/:id/use', asyncHandler(async (req, res) => {
+    const template = await MeasurementTemplate.findById(req.params.id);
 
-        res.status(201).json(template);
-    } catch (error) {
-        console.error('Error creating template:', error);
-        res.status(500).json({ error: 'Failed to create template' });
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Update template
-router.put('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { name, measurements } = req.body;
+    await template.recordUsage();
 
-        const template = await prisma.measurementTemplate.update({
-            where: { id },
-            data: {
-                name,
-                measurements: typeof measurements === 'string' ? measurements : JSON.stringify(measurements)
-            },
-            include: {
-                client: { select: { name: true } },
-                garmentType: { select: { name: true } }
-            }
-        });
+    res.json({ message: 'Usage recorded', template });
+}));
 
-        res.json(template);
-    } catch (error) {
-        console.error('Error updating template:', error);
-        res.status(500).json({ error: 'Failed to update template' });
+/**
+ * @route   DELETE /api/measurement-templates/:id
+ * @desc    Delete template
+ * @access  Private
+ */
+router.delete('/:id', asyncHandler(async (req, res) => {
+    const template = await MeasurementTemplate.findByIdAndDelete(req.params.id);
+
+    if (!template) {
+        return res.status(404).json({ error: 'Template not found' });
     }
-});
 
-// Delete template
-router.delete('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        await prisma.measurementTemplate.delete({
-            where: { id }
-        });
-
-        res.json({ message: 'Template deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting template:', error);
-        res.status(500).json({ error: 'Failed to delete template' });
-    }
-});
-
-// Get last measurements for a client
-router.get('/client/:clientId/last', authenticate, async (req, res) => {
-    try {
-        const { clientId } = req.params;
-
-        const lastOrder = await prisma.order.findFirst({
-            where: { clientId },
-            orderBy: { createdAt: 'desc' },
-            select: { measurements: true }
-        });
-
-        if (!lastOrder || !lastOrder.measurements) {
-            return res.json(null);
-        }
-
-        res.json({ measurements: lastOrder.measurements });
-    } catch (error) {
-        console.error('Error fetching last measurements:', error);
-        res.status(500).json({ error: 'Failed to fetch last measurements' });
-    }
-});
+    res.json({ message: 'Template deleted successfully', template });
+}));
 
 export default router;
